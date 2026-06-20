@@ -62,7 +62,7 @@ const osThreadAttr_t display_attributes = {
     .priority   = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
-static __attribute__((section(".ccmram"))) uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
+static uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
 static HeapRegion_t xHeapRegions[] = {
     {ucHeapCCM, sizeof(ucHeapCCM)},
     {NULL, 0}};

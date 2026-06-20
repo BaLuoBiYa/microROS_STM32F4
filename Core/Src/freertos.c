@@ -26,15 +26,11 @@
 /* USER CODE BEGIN Includes */
 #include <cmsis_os.h>
 
-#include <rcl/rcl.h>
-#include <rcl/error_handling.h>
-#include <rclc/rclc.h>
-#include <rclc/executor.h>
-#include <uxr/client/transport.h>
-#include <rmw_microxrcedds_c/config.h>
-#include <rmw_microros/rmw_microros.h>
+#include "ros.h"
 
 #include <std_msgs/msg/int32.h>
+#include <std_srvs/srv/set_bool.h>
+#include <rosidl_runtime_c/string_functions.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -72,17 +68,50 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+// ── SetBool service callback ─────────────────────────────────────
+bool g_service_flag = false;
+
+void setBool_callback(const void *req, void *res)
+{
+    (void) req;
+    std_srvs__srv__SetBool_Response *res_out = (std_srvs__srv__SetBool_Response *) res;
+
+    g_service_flag   = !g_service_flag;
+    res_out->success = g_service_flag;
+
+    // message 必须指向合法 RAM，否则 XRCE 序列化失败 → 客户端超时
+    rosidl_runtime_c__String__assign(&res_out->message,
+                                     g_service_flag ? "on" : "off");
+
+    HAL_GPIO_TogglePin(LED_RED_GPIO_Port, LED_RED_Pin);
+}
+
+// ── entity setup (called after each reconnect) ───────────────────
+static std_msgs__msg__Int32 msg;
+static std_srvs__srv__SetBool_Request svc_req;
+static std_srvs__srv__SetBool_Response svc_res;
+
+bool setupEntities(Node *node)
+{
+    // publisher (heartbeat)
+    bool ok = initPublisher(node, 0,
+                            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+                            "STM32_HeartBeat");
+
+    // service (SetBool)
+    ok = ok && initService(node, 0,
+                           ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
+                           "set_bool",
+                           &svc_req, &svc_res,
+                           setBool_callback);
+    return ok;
+}
+
+// ── microROS thread ──────────────────────────────────────────────
 void StartMicroROS(void *argument)
 {
-    // micro-ROS configuration
-    rmw_uros_set_custom_transport(
-        true,
-        (void *) &huart1,
-        cubemx_transport_open,
-        cubemx_transport_close,
-        cubemx_transport_write,
-        cubemx_transport_read);
-
+    // must be FIRST: replace default allocator BEFORE any micro-ROS init
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
     freeRTOS_allocator.allocate        = microros_allocate;
     freeRTOS_allocator.deallocate      = microros_deallocate;
@@ -93,47 +122,32 @@ void StartMicroROS(void *argument)
         // printf("Error on default allocators (line %d)\n", __LINE__);
     }
 
-    // micro-ROS app
-    // ── init_options & support ───────────────────────────────────
-    rcl_allocator_t allocator = rcl_get_default_allocator();
-
-    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
-    rcl_init_options_init(&init_options, allocator);
-    rcl_init_options_set_domain_id(&init_options, 10);
-
-    rclc_support_t support;
-    rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
+    // micro-ROS configuration (allocator already replaced → uses microROS heap)
+    rmw_uros_set_custom_transport(
+        true,
+        (void *) &huart1,
+        cubemx_transport_open,
+        cubemx_transport_close,
+        cubemx_transport_write,
+        cubemx_transport_read);
 
     // ── node ─────────────────────────────────────────────────────
-    rcl_node_t node;
-    rclc_node_init_default(&node,
-                           "cubemx_node",
-                           "",
-                           &support);
-    // micro-ROS app
-
-
-    // create publisher
-    rcl_publisher_t publisher;
-    std_msgs__msg__Int32 msg;
-    rclc_publisher_init_default(
-        &publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-        "STM32_HeartBeat");
+    static Node node;
+    initNode(&node);
+    node.setup = setupEntities;
 
     msg.data = 0;
 
+    // ── main loop ────────────────────────────────────────────────
     for (;;) {
-        rcl_ret_t ret = rcl_publish(&publisher,
-                                    &msg, NULL);
-        if (ret != RCL_RET_OK) {
-            // printf("Error publishing (line %d)\n", __LINE__);
+        node.spin(&node);
+
+        if (node.state == AGENT_CONNECTED) {
+            node.publish(&node, 0, &msg);
+            msg.data++;
         }
 
-        msg.data++;
         osDelay(10);
     }
 }
 /* USER CODE END Application */
-
