@@ -1,0 +1,77 @@
+# 完整选项: https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+---
+# 基础风格: Microsoft (BSD 风格大括号)
+BasedOnStyle: Microsoft
+IndentWidth: 4
+UseTab: Never
+TabWidth: 4
+# 0 = 不自动换行，由用户自由决定参数断行位置
+ColumnLimit: 0
+
+# 大括号风格
+BreakBeforeBraces: Linux
+# 函数/控制语句后换行
+AlwaysBreakAfterReturnType: None
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+
+# 缩进和对齐
+IndentCaseLabels: true
+IndentGotoLabels: false
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+
+# 空格
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: true
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+PointerAlignment: Right
+
+# 换行
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: false
+  BeforeElse: false
+
+# 注释
+ReflowComments: true
+SpacesBeforeTrailingComments: 2
+
+# include 排序 (嵌入式项目通常不希望自动排序)
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# 宏/预处理
+IndentPPDirectives: BeforeHash
+
+# 其他
+MaxEmptyLinesToKeep: 2
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+---
+# C 语言特定设置
+Language: Cpp
+AccessModifierOffset: -4
+NamespaceIndentation: All
+FixNamespaceComments: false

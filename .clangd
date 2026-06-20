@@ -1,0 +1,52 @@
+CompileFlags:
+  CompilationDatabase: build/Debug
+  Remove:
+    # clang 不理解这些 GCC 特有的 specs 选项
+    - "--specs=nano.specs"
+    - "--specs=nosys.specs"
+    - "-mthumb"
+    - "-mfpu=fpv4-sp-d16"
+    - "-mfloat-abi=hard"
+    - "-mcpu=cortex-m4"
+  Add:
+    # 让 clang 忽略它不认识的警告选项
+    - "-Wno-unknown-warning-option"
+    - "-Wno-unused-result"
+    # 指定 ARM 交叉编译工具链的路径，让 clangd 能找到标准头文件
+    - "--target=arm-none-eabi"
+    - "-mcpu=cortex-m4"
+    - "-mfpu=fpv4-sp-d16"
+    - "-mfloat-abi=hard"
+    # 补充工具链的系统头文件路径 (newlib: reent.h 等)
+    - "-isystem/opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/arm-none-eabi/include"
+
+Diagnostics:
+  # 抑制不想要的诊断
+  UnusedIncludes: None
+  MissingIncludes: None
+  Suppress:
+    - unused-result
+  # clang-tidy 检查
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - modernize-use-nullptr
+      - readability-*
+    Remove:
+      - modernize-use-trailing-return-type
+      - readability-magic-numbers
+      - readability-identifier-length
+
+Index:
+  Background: Build
+
+Hover:
+  ShowAKA: true
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Completion:
+  AllScopes: true

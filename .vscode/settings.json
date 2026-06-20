@@ -1,0 +1,42 @@
+{
+    "clangd.arguments": [
+        "--background-index",
+        "--clang-tidy",
+        "--header-insertion=iwyu",
+        "--completion-style=detailed",
+        "--function-arg-placeholders",
+        "--all-scopes-completion",
+        "--pretty",
+        "-j=4"
+    ],
+    "clangd.path": "clangd",
+    "clangd.onConfigChanged": "restart",
+    "clangd.detectExtensionConflicts": true,
+    "clangd.fallbackFlags": [
+        "-std=c11",
+        "-target",
+        "arm-none-eabi",
+        "-mcpu=cortex-m4",
+        "-mfpu=fpv4-sp-d16",
+        "-mfloat-abi=hard",
+        "-I${workspaceFolder}/Core/Inc",
+        "-I${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc",
+        "-I${workspaceFolder}/Drivers/CMSIS/Include",
+        "-I${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+        "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/include",
+        "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+        "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F",
+        "-DSTM32F407xx",
+        "-DUSE_HAL_DRIVER",
+        "-DDEBUG"
+    ],
+    "[c]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+        "editor.formatOnSave": true
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+        "editor.formatOnSave": true
+    },
+    "C_Cpp.intelliSenseEngine": "disabled"
+}

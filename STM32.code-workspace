@@ -1,0 +1,130 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "clangd.arguments": [
+            "--header-insertion=never"
+        ],
+        "files.autoGuessEncoding": true,
+        "C_Cpp.default.configurationProvider": "cl.eide",
+        "C_Cpp.errorSquiggles": "disabled",
+        "files.associations": {
+            ".eideignore": "ignore",
+            "*.a51": "a51",
+            "*.h": "c",
+            "*.c": "c",
+            "*.hxx": "cpp",
+            "*.hpp": "cpp",
+            "*.c++": "cpp",
+            "*.cpp": "cpp",
+            "*.cxx": "cpp",
+            "*.cc": "cpp"
+        },
+        "[yaml]": {
+            "editor.insertSpaces": true,
+            "editor.tabSize": 4,
+            "editor.autoIndent": "advanced"
+        },
+		"oaicopilot.baseUrl": "https://api.deepseek.com",
+		"oaicopilot.models": [
+			{
+				"id": "deepseek-v4-flash",
+				"displayName": "DeepSeek Flash",
+				"owned_by": "DeepSeek",
+				"context_length": 1000000,
+				"max_tokens": 384000,
+				"temperature": 1.0,
+				"enable_thinking":true,
+				"include_reasoning_in_request":true
+			},
+			{
+				"id": "deepseek-v4-pro",
+				"displayName": "DeepSeek Pro",
+				"owned_by": "DeepSeek",
+				"context_length": 1000000,
+				"max_tokens": 384000,
+				"temperature": 1.0,
+				"enable_thinking":true,
+				"include_reasoning_in_request":true
+			}
+		],
+		"oaicopilot.commitLanguage": "Chinese (Simplified)",
+
+		"clangd.arguments": [
+        "--background-index",
+        "--clang-tidy",
+        "--header-insertion=iwyu",
+        "--completion-style=detailed",
+        "--function-arg-placeholders",
+        "--all-scopes-completion",
+        "--pretty",
+        "-j=4"
+		],
+		"clangd.path": "clangd",
+		"clangd.onConfigChanged": "restart",
+		"clangd.detectExtensionConflicts": true,
+		"clangd.fallbackFlags": [
+			"-std=c11",
+			"-target",
+			"arm-none-eabi",
+			"-mcpu=cortex-m4",
+			"-mfpu=fpv4-sp-d16",
+			"-mfloat-abi=hard",
+			"-I${workspaceFolder}/Core/Inc",
+			"-I${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc",
+			"-I${workspaceFolder}/Drivers/CMSIS/Include",
+			"-I${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+			"-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/include",
+			"-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+			"-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F",
+			"-DSTM32F407xx",
+			"-DUSE_HAL_DRIVER",
+			"-DDEBUG"
+		],
+		"[c]": {
+			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+			"editor.formatOnSave": true
+		},
+		"[cpp]": {
+			"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+			"editor.formatOnSave": true
+		},
+	},
+	"extensions": {
+		"recommendations": [
+			"cl.eide",
+			"keroc.hex-fmt",
+			"xiaoyongdong.srecord",
+			"hars.cppsnippets",
+			"zixuanwang.linkerscript",
+			"redhat.vscode-yaml",
+			"IBM.output-colorizer",
+			"cschlosser.doxdocgen",
+			"ms-vscode.vscode-serial-monitor",
+			"dan-c-underwood.arm",
+			"marus25.cortex-debug",
+			"johnny-zhao.oai-compatible-copilot"
+		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"cwd": "${workspaceRoot}",
+				"type": "cortex-debug",
+				"request": "launch",
+				"name": "openocd",
+				"servertype": "openocd",
+				"executable": "build/Debug/STM32.elf",
+				"runToEntryPoint": "main",
+				"configFiles": [
+				"interface/cmsis-dap.cfg",
+				"target/stm32f4x.cfg"
+			]
+			}
+		]
+	}
+}
