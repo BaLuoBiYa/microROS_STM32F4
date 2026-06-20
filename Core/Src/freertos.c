@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "rcl/publisher.h"
 #include "task.h"
 #include "main.h"
 
@@ -137,3 +136,4 @@ void StartMicroROS(void *argument)
     }
 }
 /* USER CODE END Application */
+
