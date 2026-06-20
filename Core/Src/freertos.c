@@ -19,6 +19,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
+#include "rcl/publisher.h"
 #include "task.h"
 #include "main.h"
 
@@ -94,34 +95,39 @@ void StartMicroROS(void *argument)
     }
 
     // micro-ROS app
+    // ── init_options & support ───────────────────────────────────
+    rcl_allocator_t allocator = rcl_get_default_allocator();
 
+    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+    rcl_init_options_init(&init_options, allocator);
+    rcl_init_options_set_domain_id(&init_options, 10);
+
+    rclc_support_t support;
+    rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
+
+    // ── node ─────────────────────────────────────────────────────
+    rcl_node_t node;
+    rclc_node_init_default(&node,
+                           "cubemx_node",
+                           "",
+                           &support);
     // micro-ROS app
 
-    rcl_publisher_t publisher;
-    std_msgs__msg__Int32 msg;
-    rclc_support_t support;
-    rcl_allocator_t allocator;
-    rcl_node_t node;
-
-    allocator = rcl_get_default_allocator();
-
-    // create init_options
-    rclc_support_init(&support, 0, NULL, &allocator);
-
-    // create node
-    rclc_node_init_default(&node, "cubemx_node", "", &support);
 
     // create publisher
+    rcl_publisher_t publisher;
+    std_msgs__msg__Int32 msg;
     rclc_publisher_init_default(
         &publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-        "cubemx_publisher");
+        "STM32_HeartBeat");
 
     msg.data = 0;
 
     for (;;) {
-        rcl_ret_t ret = rcl_publish(&publisher, &msg, NULL);
+        rcl_ret_t ret = rcl_publish(&publisher,
+                                    &msg, NULL);
         if (ret != RCL_RET_OK) {
             // printf("Error publishing (line %d)\n", __LINE__);
         }
@@ -131,4 +137,3 @@ void StartMicroROS(void *argument)
     }
 }
 /* USER CODE END Application */
-
