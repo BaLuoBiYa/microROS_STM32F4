@@ -75,31 +75,25 @@ bool g_service_flag = false;
 void setBool_callback(const void *req, void *res)
 {
     (void) req;
-    std_srvs__srv__SetBool_Response *res_out = (std_srvs__srv__SetBool_Response *) res;
+    std_srvs__srv__SetBool_Response *r = (std_srvs__srv__SetBool_Response *) res;
 
-    g_service_flag   = !g_service_flag;
-    res_out->success = g_service_flag;
-
-    // message 必须指向合法 RAM，否则 XRCE 序列化失败 → 客户端超时
-    rosidl_runtime_c__String__assign(&res_out->message,
-                                     g_service_flag ? "on" : "off");
-
+    g_service_flag = !g_service_flag;
+    r->success     = g_service_flag;
+    rosidl_runtime_c__String__assign(&r->message, g_service_flag ? "on" : "off");
     HAL_GPIO_TogglePin(LED_RED_GPIO_Port, LED_RED_Pin);
 }
 
-// ── entity setup (called after each reconnect) ───────────────────
+// ── entity setup ─────────────────────────────────────────────────
 static std_msgs__msg__Int32 msg;
 static std_srvs__srv__SetBool_Request svc_req;
 static std_srvs__srv__SetBool_Response svc_res;
 
 bool setupEntities(Node *node)
 {
-    // publisher (heartbeat)
     bool ok = initPublisher(node, 0,
                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
                             "STM32_HeartBeat");
 
-    // service (SetBool)
     ok = ok && initService(node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                            "set_bool",
@@ -111,25 +105,19 @@ bool setupEntities(Node *node)
 // ── microROS thread ──────────────────────────────────────────────
 void StartMicroROS(void *argument)
 {
-    // must be FIRST: replace default allocator BEFORE any micro-ROS init
+    // custom allocator
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
     freeRTOS_allocator.allocate        = microros_allocate;
     freeRTOS_allocator.deallocate      = microros_deallocate;
     freeRTOS_allocator.reallocate      = microros_reallocate;
     freeRTOS_allocator.zero_allocate   = microros_zero_allocate;
+    (void) rcutils_set_default_allocator(&freeRTOS_allocator);
 
-    if (!rcutils_set_default_allocator(&freeRTOS_allocator)) {
-        // printf("Error on default allocators (line %d)\n", __LINE__);
-    }
-
-    // micro-ROS configuration (allocator already replaced → uses microROS heap)
+    // custom transport
     rmw_uros_set_custom_transport(
-        true,
-        (void *) &huart1,
-        cubemx_transport_open,
-        cubemx_transport_close,
-        cubemx_transport_write,
-        cubemx_transport_read);
+        true, (void *) &huart1,
+        cubemx_transport_open, cubemx_transport_close,
+        cubemx_transport_write, cubemx_transport_read);
 
     // ── node ─────────────────────────────────────────────────────
     static Node node;
