@@ -53,7 +53,6 @@ static void LCD_DrawRLE(const uint8_t *rle, uint32_t len,
     }
 }
 
-/* ── 状态机：循环显示数字 0→1→2→3 ──────────────────────────── */
 void StartDisplay(void *argument)
 {
     LCD_Init();    /* LCD ILI9341 初始化       */

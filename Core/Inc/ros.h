@@ -14,8 +14,8 @@
 #define NODE_NAME      "stm"
 #define NODE_NAMESPACE ""
 
-#define SUBSCRIBER_NUM 2
-#define PUBLISHER_NUM  0
+#define SUBSCRIBER_NUM 3
+#define PUBLISHER_NUM  1
 #define SERVICE_NUM    1
 #define CLIENT_NUM     0
 #define TIMER_NUM      0

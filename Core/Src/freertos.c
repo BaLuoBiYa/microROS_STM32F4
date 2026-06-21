@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 
@@ -29,9 +28,12 @@
 
 #include "ros.h"
 #include "lcd.h"
+#include "can.h"
+#include "gpio.h"
 
 #include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/u_int8.h>
+#include <std_msgs/msg/u_int8_multi_array.h>
 #include <std_srvs/srv/set_bool.h>
 #include <rosidl_runtime_c/string_functions.h>
 /* USER CODE END Includes */
@@ -55,7 +57,10 @@
 /* USER CODE BEGIN Variables */
 extern UART_HandleTypeDef huart1;
 extern IWDG_HandleTypeDef hiwdg;
+extern CAN_HandleTypeDef hcan1;
 
+extern osMessageQueueId_t canTxHandle;
+extern osMessageQueueId_t canRxHandle;
 extern osMessageQueueId_t dispNumHandle;
 /* USER CODE END Variables */
 
@@ -75,6 +80,10 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+GPIO pump, led_red, led_blue;
+CAN can1;
+static uint32_t can_rx_count = 0; /* CAN RX 发布计数器 */
+
 // ── pump_ctlk service callback ──
 void pump_ctl_callback(const void *req, void *res)
 {
@@ -82,11 +91,16 @@ void pump_ctl_callback(const void *req, void *res)
     std_srvs__srv__SetBool_Request *req_  = (std_srvs__srv__SetBool_Request *) req;
 
     res_->success = true;
-    HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, req_->data ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(PUMP_GPIO_Port, PUMP_Pin, req_->data ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    bool pump_state = HAL_GPIO_ReadPin(PUMP_GPIO_Port, PUMP_Pin) ? true : false;
+    if (req_->data == true) {
+        led_red.on(&led_red);
+        pump.on(&pump);
+        rosidl_runtime_c__String__assign(&res_->message, "on");
 
-    rosidl_runtime_c__String__assign(&res_->message, pump_state ? "on" : "off");
+    } else {
+        led_red.off(&led_red);
+        pump.off(&pump);
+        rosidl_runtime_c__String__assign(&res_->message, "off");
+    }
 }
 
 // ── alive callback ──
@@ -105,9 +119,25 @@ void dispNum_callback(const void *msg)
     osMessageQueuePut(dispNumHandle, &disp_num, 0, 0);
 }
 
+// ── can_tx callback ──
+void canTx_callback(const void *msg)
+{
+    std_msgs__msg__UInt8MultiArray *msg_ = (std_msgs__msg__UInt8MultiArray *) msg;
+    if (msg_->data.size != 13) {
+        return;
+    }
+    CANFrame_t frame;
+    memcpy(frame.raw, msg_->data.data, 13);
+    osMessageQueuePut(canTxHandle, &frame, 0, 0);
+}
+
 // ── entity setup ──
 static std_msgs__msg__UInt8 disp_msg;
 static std_msgs__msg__Empty alive_msg;
+static std_msgs__msg__UInt8MultiArray can_tx_msg;
+static std_msgs__msg__UInt8MultiArray can_rx_msg;
+static uint8_t can_tx_data[13]; /* 预分配 UInt8MultiArray 序列缓冲 */
+
 static std_srvs__srv__SetBool_Request svc_req;
 static std_srvs__srv__SetBool_Response svc_res;
 
@@ -116,6 +146,11 @@ bool setupEntities(Node *node)
     // 重连时重置 response 字符串，避免复用已释放的内存
     rosidl_runtime_c__String__fini(&svc_res.message);
     rosidl_runtime_c__String__init(&svc_res.message);
+
+    /* 预分配 UInt8MultiArray 序列内存，确保 deserialize 不失败 */
+    can_tx_msg.data.data     = can_tx_data;
+    can_tx_msg.data.capacity = 13;
+    can_tx_msg.data.size     = 0;
 
     bool ok;
     ok = initSubscriber(node, 0,
@@ -129,6 +164,15 @@ bool setupEntities(Node *node)
                               "STM32/alive",
                               &alive_msg, alive_callback);
 
+    ok = ok && initSubscriber(node, 2,
+                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
+                              "STM32/can_tx",
+                              &can_tx_msg, canTx_callback);
+
+    ok = ok && initPublisher(node, 0,
+                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
+                             "STM32/can_rx");
+
     ok = ok && initService(node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                            "STM32/pump_ctrl",
@@ -140,6 +184,10 @@ bool setupEntities(Node *node)
 // ── microROS thread ──────────────────────────────────────────────
 void StartMicroROS(void *argument)
 {
+    GPIOInit(&pump, PUMP_GPIO_Port, PUMP_Pin);
+    GPIOInit(&led_red, LED_RED_GPIO_Port, LED_RED_Pin);
+    GPIOInit(&led_blue, LED_BLUE_GPIO_Port, LED_BLUE_Pin);
+
     // custom allocator
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
     freeRTOS_allocator.allocate        = microros_allocate;
@@ -182,7 +230,35 @@ void StartMicroROS(void *argument)
         }
 
         node.spin(&node);
-        osDelay(10);
+
+        /* 非阻塞读取 CAN RX 并发布，避免占用过多 UART 带宽 */
+        CANFrame_t rx_frame;
+        if (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 10) == osOK) {
+            can_rx_msg.data.data     = rx_frame.raw;
+            can_rx_msg.data.size     = 13;
+            can_rx_msg.data.capacity = 13;
+            node.publish(&node, 0, (void *) &can_rx_msg);
+            led_blue.toggle(&led_blue);
+        }
     }
 }
+
+void StartCAN(void *argument)
+{
+    CANInit(&can1, &hcan1);
+    CANFrame_t tx_frame;
+    for (;;) {
+        /* 每次循环最多处理一帧 RX，给 TX 留出机会 */
+        CANFrame_t *rx_frame = can1.getRxFrame(&can1);
+        if (rx_frame != NULL) {
+            osMessageQueuePut(canRxHandle, rx_frame, 0, 0);
+        }
+
+        if (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 10) == osOK) {
+            can1.send(&can1, &tx_frame);
+        }
+    }
+}
+
 /* USER CODE END Application */
+

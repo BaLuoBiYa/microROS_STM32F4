@@ -130,28 +130,46 @@ void spinNode(Node *node)
         return;
     }
 
-#if SUBSCRIBER_NUM > 0
+#if SUBSCRIBER_NUM > 0 || SERVICE_NUM > 0 || CLIENT_NUM > 0
+    rcl_wait_set_clear(&node->wait_set);
+
+    #if SUBSCRIBER_NUM > 0
     for (int i = 0; i < SUBSCRIBER_NUM; i++) {
-        rcl_wait_set_clear(&node->wait_set);
         rcl_wait_set_add_subscription(&node->wait_set, &node->subscriber[i], NULL);
-        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
-        if (rc == RCL_RET_OK) {
-            rcl_take(&node->subscriber[i], node->sub_msg[i], NULL, NULL);
-            if (node->sub_cb[i]) {
-                node->sub_cb[i](node->sub_msg[i]);
+    }
+    #endif
+    #if SERVICE_NUM > 0
+    for (int i = 0; i < SERVICE_NUM; i++) {
+        rcl_wait_set_add_service(&node->wait_set, &node->service[i], NULL);
+    }
+    #endif
+    #if CLIENT_NUM > 0
+    for (int i = 0; i < CLIENT_NUM; i++) {
+        rcl_wait_set_add_client(&node->wait_set, &node->client[i], NULL);
+    }
+    #endif
+
+    rcl_ret_t rc = rcl_wait(&node->wait_set, RCL_MS_TO_NS(100));
+    if (rc != RCL_RET_OK && rc != RCL_RET_TIMEOUT) {
+        node->error_count++;
+        return;
+    }
+
+    #if SUBSCRIBER_NUM > 0
+    for (int i = 0; i < SUBSCRIBER_NUM; i++) {
+        if (node->wait_set.subscriptions[i]) {
+            if (rcl_take(&node->subscriber[i], node->sub_msg[i], NULL, NULL) == RCL_RET_OK) {
+                if (node->sub_cb[i]) {
+                    node->sub_cb[i](node->sub_msg[i]);
+                }
             }
-        } else if (rc == RCL_RET_ERROR) {
-            node->error_count++;
         }
     }
-#endif
+    #endif
 
-#if SERVICE_NUM > 0
+    #if SERVICE_NUM > 0
     for (int i = 0; i < SERVICE_NUM; i++) {
-        rcl_wait_set_clear(&node->wait_set);
-        rcl_wait_set_add_service(&node->wait_set, &node->service[i], NULL);
-        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
-        if (rc == RCL_RET_OK) {
+        if (node->wait_set.services[i]) {
             rmw_request_id_t req_id;
             if (rcl_take_request(&node->service[i], &req_id,
                                  node->svc_req[i]) == RCL_RET_OK) {
@@ -159,10 +177,9 @@ void spinNode(Node *node)
                 rcl_send_response(&node->service[i], &req_id,
                                   node->svc_res[i]);
             }
-        } else if (rc == RCL_RET_ERROR) {
-            node->error_count++;
         }
     }
+    #endif
 #endif
 
 #if TIMER_NUM > 0
