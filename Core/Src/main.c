@@ -58,8 +58,13 @@ const osThreadAttr_t microROSNode_attributes = {
 osThreadId_t displayHandle;
 const osThreadAttr_t display_attributes = {
   .name = "display",
-  .stack_size = 128 * 4,
+  .stack_size = 1000 * 4,
   .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for dispNum */
+osMessageQueueId_t dispNumHandle;
+const osMessageQueueAttr_t dispNum_attributes = {
+  .name = "dispNum"
 };
 /* USER CODE BEGIN PV */
 static uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
@@ -138,6 +143,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
     /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of dispNum */
+  dispNumHandle = osMessageQueueNew (16, sizeof(uint8_t), &dispNum_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
     /* add queues, ... */
