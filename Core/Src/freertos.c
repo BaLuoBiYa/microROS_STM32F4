@@ -70,17 +70,17 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 /* USER CODE BEGIN Application */
 
 // ── SetBool service callback ─────────────────────────────────────
-bool g_service_flag = false;
-
 void setBool_callback(const void *req, void *res)
 {
-    (void) req;
-    std_srvs__srv__SetBool_Response *r = (std_srvs__srv__SetBool_Response *) res;
+    std_srvs__srv__SetBool_Response *res_ = (std_srvs__srv__SetBool_Response *) res;
+    std_srvs__srv__SetBool_Request *req_  = (std_srvs__srv__SetBool_Request *) req;
 
-    g_service_flag = !g_service_flag;
-    r->success     = g_service_flag;
-    rosidl_runtime_c__String__assign(&r->message, g_service_flag ? "on" : "off");
-    HAL_GPIO_TogglePin(LED_RED_GPIO_Port, LED_RED_Pin);
+    res_->success = true;
+    HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, req_->data ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(PUMP_GPIO_Port, PUMP_Pin, req_->data ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    bool pump_state = HAL_GPIO_ReadPin(PUMP_GPIO_Port, PUMP_Pin) ? true : false;
+
+    rosidl_runtime_c__String__assign(&res_->message, pump_state ? "on" : "off");
 }
 
 // ── entity setup ─────────────────────────────────────────────────
@@ -90,13 +90,18 @@ static std_srvs__srv__SetBool_Response svc_res;
 
 bool setupEntities(Node *node)
 {
-    bool ok = initPublisher(node, 0,
-                            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-                            "STM32_HeartBeat");
+    // 重连时重置 response 字符串，避免复用已释放的内存
+    rosidl_runtime_c__String__fini(&svc_res.message);
+    rosidl_runtime_c__String__init(&svc_res.message);
+
+    bool ok;
+    ok = initPublisher(node, 0,
+                       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+                       "STM32_HeartBeat");
 
     ok = ok && initService(node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
-                           "set_bool",
+                           "pump_ctrl",
                            &svc_req, &svc_res,
                            setBool_callback);
     return ok;
@@ -128,11 +133,34 @@ void StartMicroROS(void *argument)
 
     // ── main loop ────────────────────────────────────────────────
     for (;;) {
+        if (!node.inited) {
+            // probe agent with quick ping — avoid 10s blocking in createNode
+            if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
+                if (node.create(&node) && node.setup(&node)) {
+                    node.inited      = true;
+                    node.error_count = 0;
+                    msg.data         = 0;
+                } else {
+                    // partial init — clean up
+                    if (node.inited)
+                        node.destroy(&node);
+                }
+            }
+            osDelay(500);
+            continue;
+        }
+
         node.spin(&node);
 
-        if (node.state == AGENT_CONNECTED) {
-            node.publish(&node, 0, &msg);
+        if (node.publish(&node, 0, &msg)) {
             msg.data++;
+            node.error_count = 0;
+        } else {
+            node.error_count++;
+            if (node.error_count > 50) {  // ~500ms continuous failure
+                node.destroy(&node);
+                // loop will retry on next iteration
+            }
         }
 
         osDelay(10);

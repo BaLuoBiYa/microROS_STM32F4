@@ -6,12 +6,14 @@
 void initNode(Node *node)
 {
     memset(node, 0, sizeof(Node));
-    node->state   = WAITING_AGENT;
+    node->inited  = false;
     node->create  = createNode;
     node->destroy = destroyNode;
     node->spin    = spinNode;
+#if PUBLISHER_NUM > 0
     node->publish = publishMsg;
-    node->setup   = NULL;
+#endif
+    node->setup = NULL;
 }
 
 // ── createNode ───────────────────────────────────────────────────
@@ -33,13 +35,23 @@ bool createNode(Node *node)
                                                    &init_options, &allocator);
     rcl_init_options_fini(&init_options);  // CRITICAL: avoid dangling stack ptr
     if (ret != RCL_RET_OK) {
+        // try to clean up partially-initialized support, then zero the struct
+        rclc_support_fini(&node->support);
+        memset(&node->support, 0, sizeof(node->support));
         return false;
     }
 
     if (rclc_node_init_default(&node->node, NODE_NAME, NODE_NAMESPACE,
                                &node->support) != RCL_RET_OK) {
+        rcl_node_fini(&node->node);
+        rclc_support_fini(&node->support);
         return false;
     }
+
+    // shorten entity creation/destroy session timeouts (default 10s → 1s)
+    rmw_context_t *rmw_ctx = rcl_context_get_rmw_context(&node->support.context);
+    rmw_uros_set_context_entity_creation_session_timeout(rmw_ctx, 1000);
+    rmw_uros_set_context_entity_destroy_session_timeout(rmw_ctx, 1000);
 
     // wait_set replaces executor — sized for all entities (except timer/publisher)
     node->wait_set = rcl_get_zero_initialized_wait_set();
@@ -47,16 +59,22 @@ bool createNode(Node *node)
                           SUBSCRIBER_NUM, 0, 0,
                           CLIENT_NUM, SERVICE_NUM, 0,
                           &node->support.context, allocator) != RCL_RET_OK) {
+        rcl_wait_set_fini(&node->wait_set);
+        rcl_node_fini(&node->node);
+        rclc_support_fini(&node->support);
         return false;
     }
 
+    node->inited = true;
     return true;
 }
 
 // ── destroyNode ──────────────────────────────────────────────────
 bool destroyNode(Node *node)
 {
-    rcl_ret_t ret = RCL_RET_OK;
+    rcl_ret_t ret          = RCL_RET_OK;
+    rmw_context_t *rmw_ctx = rcl_context_get_rmw_context(&node->support.context);
+    rmw_uros_set_context_entity_destroy_session_timeout(rmw_ctx, 500);
 
     // 1. fini entities
 #if SUBSCRIBER_NUM > 0
@@ -95,85 +113,72 @@ bool destroyNode(Node *node)
     ret |= rclc_support_fini(&node->support);
 
     // 5. re-init function pointers (memset zeroed them in fini)
-    node->state   = WAITING_AGENT;
     node->create  = createNode;
     node->destroy = destroyNode;
     node->spin    = spinNode;
+#if PUBLISHER_NUM > 0
     node->publish = publishMsg;
-
+#endif
+    node->inited = false;
     return (ret == RCL_RET_OK);
 }
 
 // ── spinNode ─────────────────────────────────────────────────────
 void spinNode(Node *node)
 {
-    switch (node->state) {
-        case WAITING_AGENT:
-            osDelay(200);
-            node->state = AGENT_AVAILABLE;
-            break;
+    if (!node->inited)
+        return;  // safety: bail out if not initialized yet
 
-        case AGENT_AVAILABLE:
-            if (node->create(node)) {
-                node->state = AGENT_CONNECTED;
-                if (node->setup)
-                    node->setup(node);
-            } else {
-                node->state = WAITING_AGENT;
-            }
-            break;
-
-        case AGENT_CONNECTED:
-            // manual poll — no executor, no spin_some, timeout=0 (non-blocking)
 #if SUBSCRIBER_NUM > 0
-            for (int i = 0; i < SUBSCRIBER_NUM; i++) {
-                rcl_wait_set_clear(&node->wait_set);
-                rcl_wait_set_add_subscription(&node->wait_set, &node->subscriber[i], NULL);
-                if (rcl_wait(&node->wait_set, 0) == RCL_RET_OK) {
-                    rcl_take(&node->subscriber[i], node->sub_msg[i], NULL, NULL);
-                    if (node->sub_cb[i])
-                        node->sub_cb[i](node->sub_msg[i]);
-                }
+    for (int i = 0; i < SUBSCRIBER_NUM; i++) {
+        rcl_wait_set_clear(&node->wait_set);
+        rcl_wait_set_add_subscription(&node->wait_set, &node->subscriber[i], NULL);
+        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
+        if (rc == RCL_RET_OK) {
+            rcl_take(&node->subscriber[i], node->sub_msg[i], NULL, NULL);
+            if (node->sub_cb[i]) {
+                node->sub_cb[i](node->sub_msg[i]);
             }
+        } else if (rc == RCL_RET_ERROR) {
+            node->error_count++;
+        }
+    }
 #endif
 #if SERVICE_NUM > 0
-            for (int i = 0; i < SERVICE_NUM; i++) {
-                rcl_wait_set_clear(&node->wait_set);
-                rcl_wait_set_add_service(&node->wait_set, &node->service[i], NULL);
-                if (rcl_wait(&node->wait_set, 0) == RCL_RET_OK) {
-                    rmw_request_id_t req_id;
-                    if (rcl_take_request(&node->service[i], &req_id,
-                                         node->svc_req[i]) == RCL_RET_OK) {
-                        node->svc_cb[i](node->svc_req[i], node->svc_res[i]);
-                        rcl_send_response(&node->service[i], &req_id,
-                                          node->svc_res[i]);
-                    }
-                }
+    for (int i = 0; i < SERVICE_NUM; i++) {
+        rcl_wait_set_clear(&node->wait_set);
+        rcl_wait_set_add_service(&node->wait_set, &node->service[i], NULL);
+        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
+        if (rc == RCL_RET_OK) {
+            rmw_request_id_t req_id;
+            if (rcl_take_request(&node->service[i], &req_id,
+                                 node->svc_req[i]) == RCL_RET_OK) {
+                node->svc_cb[i](node->svc_req[i], node->svc_res[i]);
+                rcl_send_response(&node->service[i], &req_id,
+                                  node->svc_res[i]);
             }
+        } else if (rc == RCL_RET_ERROR) {
+            node->error_count++;
+        }
+    }
 #endif
 #if CLIENT_NUM > 0
-            for (int i = 0; i < CLIENT_NUM; i++) {
-                rcl_wait_set_clear(&node->wait_set);
-                rcl_wait_set_add_client(&node->wait_set, &node->client[i], NULL);
-                // client response handled by user in main loop via rcl_take_response
-                rcl_wait(&node->wait_set, 0);
-            }
+    for (int i = 0; i < CLIENT_NUM; i++) {
+        rcl_wait_set_clear(&node->wait_set);
+        rcl_wait_set_add_client(&node->wait_set, &node->client[i], NULL);
+        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
+        if (rc == RCL_RET_ERROR) {
+            node->error_count++;
+        }
+    }
 #endif
 #if TIMER_NUM > 0
-            for (int i = 0; i < TIMER_NUM; i++) {
-                int64_t last_call;
-                if (rcl_timer_is_ready(&node->timer[i])) {
-                    rcl_timer_call(&node->timer[i]);
-                }
-            }
-#endif
-            break;
-
-        case AGENT_DISCONNECTED:
-            node->destroy(node);
-            node->state = WAITING_AGENT;
-            break;
+    for (int i = 0; i < TIMER_NUM; i++) {
+        if (rcl_timer_is_ready(&node->timer[i])) {
+            rcl_timer_call(&node->timer[i]);
+        }
     }
+#endif
 }
 
 // ── Publisher ────────────────────────────────────────────────────

@@ -14,7 +14,7 @@
 #define NODE_NAME      "stm"
 #define NODE_NAMESPACE ""
 
-#define SUBSCRIBER_NUM 0
+#define SUBSCRIBER_NUM 1
 #define PUBLISHER_NUM  1
 #define SERVICE_NUM    2
 #define CLIENT_NUM     0
@@ -22,20 +22,16 @@
 
 typedef struct Node Node;
 
-typedef enum {
-    WAITING_AGENT,
-    AGENT_AVAILABLE,
-    AGENT_CONNECTED,
-    AGENT_DISCONNECTED
-} AgentStates;
-
 typedef struct Node {
     rcl_node_t node;
     rclc_support_t support;
-    rcl_wait_set_t wait_set;  // replaces executor (avoids spin_some crash)
+    rcl_wait_set_t wait_set;
+    uint8_t error_count;
+    bool inited;
 
 #if PUBLISHER_NUM > 0
     rcl_publisher_t publisher[PUBLISHER_NUM];
+    bool (*publish)(Node *node, int idx, void *msg);
 #endif
 #if SUBSCRIBER_NUM > 0
     rcl_subscription_t subscriber[SUBSCRIBER_NUM];
@@ -55,14 +51,10 @@ typedef struct Node {
     rcl_timer_t timer[TIMER_NUM];
     rclc_timer_callback_t timer_cb[TIMER_NUM];
 #endif
-
-    AgentStates state;
-
     bool (*create)(Node *node);
     bool (*destroy)(Node *node);
     void (*spin)(Node *node);
     bool (*setup)(Node *node);
-    bool (*publish)(Node *node, int idx, void *msg);
 } Node;
 
 void initNode(Node *node);
