@@ -7,17 +7,17 @@ srcDirs:
   - Core
   - Middlewares
   - Drivers
-  - ../micro_ros_stm32cubemx_utils/microros_static_library/libmicroros/microros_include
+  - microRos/libmicroros/microros_include
 virtualFolder:
   name: <virtual_root>
   files: []
   folders:
     - name: microROS
       files:
-        - path: ../micro_ros_stm32cubemx_utils/extra_sources/custom_memory_manager.c
-        - path: ../micro_ros_stm32cubemx_utils/extra_sources/microros_allocators.c
-        - path: ../micro_ros_stm32cubemx_utils/extra_sources/microros_time.c
-        - path: ../micro_ros_stm32cubemx_utils/extra_sources/microros_transports/dma_transport.c
+        - path: microRos/extra_sources/custom_memory_manager.c
+        - path: microRos/extra_sources/microros_allocators.c
+        - path: microRos/extra_sources/microros_time.c
+        - path: microRos/extra_sources/microros_transports/dma_transport.c
       folders: []
 dependenceList: []
 outDir: build
@@ -39,9 +39,9 @@ targets:
         - Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
         - Drivers/CMSIS/Device/ST/STM32F4xx/Include
         - Drivers/CMSIS/Include
-        - ../micro_ros_stm32cubemx_utils/microros_static_library/libmicroros/microros_include
+        - microRos/libmicroros/microros_include
       libList:
-        - ../micro_ros_stm32cubemx_utils/microros_static_library/libmicroros
+        - microRos/libmicroros
     excludeList: []
     settings: {}
     toolchain: GCC

@@ -19,6 +19,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
+#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 
@@ -30,7 +31,7 @@
 #include "lcd.h"
 
 #include <std_msgs/msg/empty.h>
-#include <std_msgs/msg/int32.h>
+#include <std_msgs/msg/u_int8.h>
 #include <std_srvs/srv/set_bool.h>
 #include <rosidl_runtime_c/string_functions.h>
 /* USER CODE END Includes */
@@ -54,6 +55,8 @@
 /* USER CODE BEGIN Variables */
 extern UART_HandleTypeDef huart1;
 extern IWDG_HandleTypeDef hiwdg;
+
+extern osMessageQueueId_t dispNumHandle;
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,8 +96,17 @@ void alive_callback(const void *msg)
     HAL_IWDG_Refresh(&hiwdg);
 }
 
+// ── num display callback ──
+uint8_t disp_num = 0;
+void dispNum_callback(const void *msg)
+{
+    std_msgs__msg__UInt8 *msg_ = (std_msgs__msg__UInt8 *) msg;
+    disp_num                   = msg_->data % 4;
+    osMessageQueuePut(dispNumHandle, &disp_num, 0, 0);
+}
+
 // ── entity setup ──
-static std_msgs__msg__Int32 msg;
+static std_msgs__msg__UInt8 disp_msg;
 static std_msgs__msg__Empty alive_msg;
 static std_srvs__srv__SetBool_Request svc_req;
 static std_srvs__srv__SetBool_Response svc_res;
@@ -106,20 +118,22 @@ bool setupEntities(Node *node)
     rosidl_runtime_c__String__init(&svc_res.message);
 
     bool ok;
-    ok = initPublisher(node, 0,
-                       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-                       "STM32/HeartBeat");
+    ok = initSubscriber(node, 0,
+                        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+                        "STM32/disp_num",
+                        &disp_msg, dispNum_callback);
+
+
+    ok = ok && initSubscriber(node, 1,
+                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
+                              "STM32/alive",
+                              &alive_msg, alive_callback);
 
     ok = ok && initService(node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                            "STM32/pump_ctrl",
                            &svc_req, &svc_res,
                            pump_ctl_callback);
-
-    ok = ok && initSubscriber(node, 0,
-                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
-                              "STM32/alive",
-                              &alive_msg, alive_callback);
     return ok;
 }
 
@@ -145,8 +159,6 @@ void StartMicroROS(void *argument)
     initNode(&node);
     node.setup = setupEntities;
 
-    msg.data = 0;
-
     // ── main loop ────────────────────────────────────────────────
     for (;;) {
         if (!node.inited) {
@@ -158,7 +170,6 @@ void StartMicroROS(void *argument)
                 if (node.create(&node) && node.setup(&node)) {
                     node.inited      = true;
                     node.error_count = 0;
-                    msg.data         = 0;
                 } else {
                     // partial init — clean up
                     if (node.inited) {
@@ -171,20 +182,7 @@ void StartMicroROS(void *argument)
         }
 
         node.spin(&node);
-
-        if (node.publish(&node, 0, &msg)) {
-            msg.data++;
-            node.error_count = 0;
-        } else {
-            node.error_count++;
-            if (node.error_count > 50) {  // ~500ms continuous failure
-                node.destroy(&node);
-                // loop will retry on next iteration
-            }
-        }
-
         osDelay(10);
     }
 }
 /* USER CODE END Application */
-

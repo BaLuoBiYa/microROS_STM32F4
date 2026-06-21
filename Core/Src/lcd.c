@@ -1,6 +1,8 @@
 #include "lcd.h"
 #include "lcd_digits_data.h"
 
+extern osMessageQueueId_t dispNumHandle;
+
 /* ── RLE 解码 + 调用 BSP 函数逐行刷新（RGB565） ─────────────── */
 /**
  * @brief 解码 RLE 压缩数据，通过 LCD_DispFlush 逐行写入 ILI9341
@@ -60,10 +62,10 @@ void StartDisplay(void *argument)
     /* RGB565 调色板 — 每个数字使用不同前景色（BSP 颜色宏） */
     static const uint16_t palettes[4][4] = {
         /* [0]=背景,   [3]=前景 */
-        {BLACK, BLACK, BLACK, RED},    /* 0: 黑底红字 */
-        {BLACK, BLACK, BLACK, GREEN},  /* 1: 黑底绿字 */
-        {BLACK, BLACK, BLACK, BLUE},   /* 2: 黑底蓝字 */
-        {BLACK, BLACK, BLACK, YELLOW}, /* 3: 黑底黄字 */
+        {WHITE, BLACK, BLACK, RED},    /* 0: 白底红字 */
+        {WHITE, BLACK, BLACK, GREEN},  /* 1: 白底绿字 */
+        {WHITE, BLACK, BLACK, BLUE},   /* 2: 白底蓝字 */
+        {WHITE, BLACK, BLACK, YELLOW}, /* 3: 白底黄字 */
     };
 
     /* RLE 数据指针表 */
@@ -77,18 +79,12 @@ void StartDisplay(void *argument)
         {digit_3_rle, sizeof(digit_3_rle)},
     };
 
-    uint8_t state = 0; /* 当前显示的数字 */
-
+    uint8_t state = 0;                            /* 当前显示的数字 */
+    LCD_Fill(0, 0, 239, 319, palettes[state][0]); /* 首次全屏填背景色 */
     for (;;) {
         /* 全屏填背景色 */
-        LCD_Fill(0, 0, 239, 319, palettes[state][0]);
-
+        osMessageQueueGet(dispNumHandle, &state, NULL, osWaitForever); /* 等待新数字 */
         /* RLE 解码 → 逐行 BSP 刷新 */
         LCD_DrawRLE(digits[state].data, digits[state].len, palettes[state]);
-
-        /* 切换到下一个数字 */
-        state = (state + 1) & 0x3;
-
-        osDelay(2000); /* 停留 2 秒 */
     }
 }
