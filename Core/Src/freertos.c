@@ -82,7 +82,6 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 
 GPIO pump, led_red, led_blue;
 CAN can1;
-static uint32_t can_rx_count = 0; /* CAN RX 发布计数器 */
 
 // ── pump_ctlk service callback ──
 void pump_ctl_callback(const void *req, void *res)
@@ -231,9 +230,9 @@ void StartMicroROS(void *argument)
 
         node.spin(&node);
 
-        /* 非阻塞读取 CAN RX 并发布，避免占用过多 UART 带宽 */
+        /* 非阻塞读取 CAN RX 并发布，一次性清空所有待发帧 */
         CANFrame_t rx_frame;
-        if (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 10) == osOK) {
+        while (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 0) == osOK) {
             can_rx_msg.data.data     = rx_frame.raw;
             can_rx_msg.data.size     = 13;
             can_rx_msg.data.capacity = 13;
@@ -261,4 +260,3 @@ void StartCAN(void *argument)
 }
 
 /* USER CODE END Application */
-

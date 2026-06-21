@@ -149,7 +149,7 @@ void spinNode(Node *node)
     }
     #endif
 
-    rcl_ret_t rc = rcl_wait(&node->wait_set, RCL_MS_TO_NS(100));
+    rcl_ret_t rc = rcl_wait(&node->wait_set, RCL_MS_TO_NS(10));
     if (rc != RCL_RET_OK && rc != RCL_RET_TIMEOUT) {
         node->error_count++;
         return;
