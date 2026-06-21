@@ -126,8 +126,9 @@ bool destroyNode(Node *node)
 // ── spinNode ─────────────────────────────────────────────────────
 void spinNode(Node *node)
 {
-    if (!node->inited)
-        return;  // safety: bail out if not initialized yet
+    if (!node->inited) {
+        return;
+    }
 
 #if SUBSCRIBER_NUM > 0
     for (int i = 0; i < SUBSCRIBER_NUM; i++) {
@@ -144,6 +145,7 @@ void spinNode(Node *node)
         }
     }
 #endif
+
 #if SERVICE_NUM > 0
     for (int i = 0; i < SERVICE_NUM; i++) {
         rcl_wait_set_clear(&node->wait_set);
@@ -162,16 +164,7 @@ void spinNode(Node *node)
         }
     }
 #endif
-#if CLIENT_NUM > 0
-    for (int i = 0; i < CLIENT_NUM; i++) {
-        rcl_wait_set_clear(&node->wait_set);
-        rcl_wait_set_add_client(&node->wait_set, &node->client[i], NULL);
-        rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
-        if (rc == RCL_RET_ERROR) {
-            node->error_count++;
-        }
-    }
-#endif
+
 #if TIMER_NUM > 0
     for (int i = 0; i < TIMER_NUM; i++) {
         if (rcl_timer_is_ready(&node->timer[i])) {
@@ -253,6 +246,34 @@ bool finiClient(Node *node, int idx)
 {
     assert(idx >= 0 && idx < CLIENT_NUM);
     return rcl_client_fini(&node->client[idx], &node->node) == RCL_RET_OK;
+}
+
+bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms)
+{
+    assert(idx >= 0 && idx < CLIENT_NUM && node->inited);
+
+    // non-blocking send
+    int64_t seq  = -1;
+    rcl_ret_t rc = rcl_send_request(&node->client[idx], req, &seq);
+    if (rc != RCL_RET_OK)
+        return false;
+
+    // blocking wait for response
+    int elapsed       = 0;
+    const int step_ms = 10;
+    while (elapsed < timeout_ms) {
+        rcl_wait_set_clear(&node->wait_set);
+        rcl_wait_set_add_client(&node->wait_set, &node->client[idx], NULL);
+        rcl_ret_t wait_rc = rcl_wait(&node->wait_set, RCL_MS_TO_NS(step_ms));
+        if (wait_rc == RCL_RET_OK) {
+            rmw_request_id_t req_id;
+            if (rcl_take_response(&node->client[idx], &req_id, res) == RCL_RET_OK) {
+                return true;
+            }
+        }
+        elapsed += step_ms;
+    }
+    return false;  // timeout
 }
 #endif
 

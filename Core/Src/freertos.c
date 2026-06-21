@@ -27,7 +27,9 @@
 #include <cmsis_os.h>
 
 #include "ros.h"
+#include "lcd.h"
 
+#include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/int32.h>
 #include <std_srvs/srv/set_bool.h>
 #include <rosidl_runtime_c/string_functions.h>
@@ -51,6 +53,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 extern UART_HandleTypeDef huart1;
+extern IWDG_HandleTypeDef hiwdg;
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,8 +72,8 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
-// ── SetBool service callback ─────────────────────────────────────
-void setBool_callback(const void *req, void *res)
+// ── pump_ctlk service callback ──
+void pump_ctl_callback(const void *req, void *res)
 {
     std_srvs__srv__SetBool_Response *res_ = (std_srvs__srv__SetBool_Response *) res;
     std_srvs__srv__SetBool_Request *req_  = (std_srvs__srv__SetBool_Request *) req;
@@ -83,8 +86,16 @@ void setBool_callback(const void *req, void *res)
     rosidl_runtime_c__String__assign(&res_->message, pump_state ? "on" : "off");
 }
 
-// ── entity setup ─────────────────────────────────────────────────
+// ── alive callback ──
+void alive_callback(const void *msg)
+{
+    (void) msg;
+    HAL_IWDG_Refresh(&hiwdg);
+}
+
+// ── entity setup ──
 static std_msgs__msg__Int32 msg;
+static std_msgs__msg__Empty alive_msg;
 static std_srvs__srv__SetBool_Request svc_req;
 static std_srvs__srv__SetBool_Response svc_res;
 
@@ -97,13 +108,18 @@ bool setupEntities(Node *node)
     bool ok;
     ok = initPublisher(node, 0,
                        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-                       "STM32_HeartBeat");
+                       "STM32/HeartBeat");
 
     ok = ok && initService(node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
-                           "pump_ctrl",
+                           "STM32/pump_ctrl",
                            &svc_req, &svc_res,
-                           setBool_callback);
+                           pump_ctl_callback);
+
+    ok = ok && initSubscriber(node, 0,
+                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
+                              "STM32/alive",
+                              &alive_msg, alive_callback);
     return ok;
 }
 
@@ -134,6 +150,9 @@ void StartMicroROS(void *argument)
     // ── main loop ────────────────────────────────────────────────
     for (;;) {
         if (!node.inited) {
+            // keep watchdog alive while waiting for agent
+            HAL_IWDG_Refresh(&hiwdg);
+
             // probe agent with quick ping — avoid 10s blocking in createNode
             if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
                 if (node.create(&node) && node.setup(&node)) {
@@ -142,8 +161,9 @@ void StartMicroROS(void *argument)
                     msg.data         = 0;
                 } else {
                     // partial init — clean up
-                    if (node.inited)
+                    if (node.inited) {
                         node.destroy(&node);
+                    }
                 }
             }
             osDelay(500);
@@ -167,3 +187,4 @@ void StartMicroROS(void *argument)
     }
 }
 /* USER CODE END Application */
+

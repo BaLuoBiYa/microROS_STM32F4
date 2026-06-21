@@ -57,6 +57,7 @@ targets:
             ASM_FLAGS: -DDEBUG
           beforeBuildTasks: []
           c/cpp-compiler:
+            C_FLAGS: -Wno-unused-result
             language-c: c11
             language-cpp: c++11
             one-elf-section-per-data: true

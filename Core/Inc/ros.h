@@ -81,6 +81,7 @@ bool finiService(Node *node, int idx);
 #if CLIENT_NUM > 0
 bool initClient(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc);
 bool finiClient(Node *node, int idx);
+bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms);
 #endif
 
 #if TIMER_NUM > 0
