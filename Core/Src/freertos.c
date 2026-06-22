@@ -230,15 +230,20 @@ void StartMicroROS(void *argument)
 
         node.spin(&node);
 
-        /* 非阻塞读取 CAN RX 并发布，一次性清空所有待发帧 */
         CANFrame_t rx_frame;
+        bool has_frame = false;
         while (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 0) == osOK) {
+            has_frame = true;
+        }
+        if (has_frame) {
             can_rx_msg.data.data     = rx_frame.raw;
             can_rx_msg.data.size     = 13;
             can_rx_msg.data.capacity = 13;
             node.publish(&node, 0, (void *) &can_rx_msg);
             led_blue.toggle(&led_blue);
         }
+
+        osDelay(10);
     }
 }
 
@@ -247,15 +252,18 @@ void StartCAN(void *argument)
     CANInit(&can1, &hcan1);
     CANFrame_t tx_frame;
     for (;;) {
-        /* 每次循环最多处理一帧 RX，给 TX 留出机会 */
-        CANFrame_t *rx_frame = can1.getRxFrame(&can1);
-        if (rx_frame != NULL) {
+        /* drain all RX frames from ISR ring buffer */
+        CANFrame_t *rx_frame;
+        while ((rx_frame = can1.getRxFrame(&can1)) != NULL) {
             osMessageQueuePut(canRxHandle, rx_frame, 0, 0);
         }
 
-        if (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 10) == osOK) {
+        /* non-blocking TX */
+        if (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 0) == osOK) {
             can1.send(&can1, &tx_frame);
         }
+
+        osDelay(1); /* yield CPU to microROS thread */
     }
 }
 

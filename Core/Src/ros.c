@@ -1,5 +1,6 @@
 #include "ros.h"
 #include "cmsis_os.h"
+#include "rclc/subscription.h"
 #include <string.h>
 
 // ── initNode ─────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ void spinNode(Node *node)
     }
     #endif
 
-    rcl_ret_t rc = rcl_wait(&node->wait_set, RCL_MS_TO_NS(10));
+    rcl_ret_t rc = rcl_wait(&node->wait_set, 0);
     if (rc != RCL_RET_OK && rc != RCL_RET_TIMEOUT) {
         node->error_count++;
         return;
@@ -239,8 +240,8 @@ bool initSubscriber(Node *node, int idx, const rosidl_message_type_support_t *ty
     assert(idx >= 0 && idx < SUBSCRIBER_NUM);
     node->sub_cb[idx]  = cb;
     node->sub_msg[idx] = msg;
-    return rclc_subscription_init_default(&node->subscriber[idx],
-                                          &node->node, type, topic) == RCL_RET_OK;
+    return rclc_subscription_init_best_effort(&node->subscriber[idx],
+                                              &node->node, type, topic) == RCL_RET_OK;
 }
 
 bool finiSubscriber(Node *node, int idx)

@@ -18,6 +18,7 @@ virtualFolder:
         - path: microRos/extra_sources/microros_allocators.c
         - path: microRos/extra_sources/microros_time.c
         - path: microRos/extra_sources/microros_transports/dma_transport.c
+        - path: microRos/extra_sources/microros_transports/usb_cdc_transport.c
       folders: []
 dependenceList: []
 outDir: build
@@ -42,7 +43,8 @@ targets:
         - microRos/libmicroros/microros_include
       libList:
         - microRos/libmicroros
-    excludeList: []
+    excludeList:
+      - <virtual_root>/microROS/usb_cdc_transport.c
     settings: {}
     toolchain: GCC
     toolchainConfigMap:

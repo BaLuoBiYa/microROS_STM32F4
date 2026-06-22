@@ -54,7 +54,7 @@ osThreadId_t microROSNodeHandle;
 const osThreadAttr_t microROSNode_attributes = {
     .name       = "microROSNode",
     .stack_size = 4000 * 4,
-    .priority   = (osPriority_t) osPriorityNormal,
+    .priority   = (osPriority_t) osPriorityLow,
 };
 /* Definitions for display */
 osThreadId_t displayHandle;
