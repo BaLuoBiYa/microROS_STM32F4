@@ -151,6 +151,10 @@ bool setupEntities(Node *node)
     can_tx_msg.data.capacity = 13;
     can_tx_msg.data.size     = 0;
 
+    /* 重连时 fini 上次残留，重新初始化发布用的 can_rx_msg */
+    std_msgs__msg__UInt8MultiArray__fini(&can_rx_msg);
+    std_msgs__msg__UInt8MultiArray__init(&can_rx_msg);
+
     bool ok;
     ok = initSubscriber(node, 0,
                         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
@@ -267,3 +271,4 @@ void StartCAN(void *argument)
 }
 
 /* USER CODE END Application */
+
