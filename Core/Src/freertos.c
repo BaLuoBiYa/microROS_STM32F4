@@ -208,12 +208,11 @@ void StartMicroROS(void *argument)
 
     // ── main loop ────────────────────────────────────────────────
     for (;;) {
-        if (!node.inited) {
-            // keep watchdog alive while waiting for agent
-            HAL_IWDG_Refresh(&hiwdg);
+        // HAL_IWDG_Refresh(&hiwdg);
 
+        if (!node.inited) {
             // probe agent with quick ping — avoid 10s blocking in createNode
-            if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
+            if (rmw_uros_ping_agent(0, 1) == RMW_RET_OK) {
                 if (node.create(&node) && node.setup(&node)) {
                     node.inited      = true;
                     node.error_count = 0;
@@ -268,4 +267,3 @@ void StartCAN(void *argument)
 }
 
 /* USER CODE END Application */
-
