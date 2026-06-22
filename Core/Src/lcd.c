@@ -14,7 +14,7 @@ static void LCD_DrawRLE(const uint8_t *rle, uint32_t len,
                         const uint16_t palette[4])
 {
     /* 静态缓冲区 — 避免栈溢出（FreeRTOS 任务栈通常很小） */
-    static uint16_t rowBuf[240];
+    static uint16_t rowBuf[240] __attribute__((section(".ccmram")));
     uint32_t i     = 0; /* RLE 字节索引               */
     uint16_t row   = 0; /* 当前行 Y 坐标              */
     uint16_t col   = 0; /* 当前行内的列 X 坐标        */

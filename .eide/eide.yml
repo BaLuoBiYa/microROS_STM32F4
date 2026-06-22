@@ -8,6 +8,7 @@ srcDirs:
   - Middlewares
   - Drivers
   - microRos/libmicroros/microros_include
+  - USB_DEVICE
 virtualFolder:
   name: <virtual_root>
   files: []
@@ -41,10 +42,14 @@ targets:
         - Drivers/CMSIS/Device/ST/STM32F4xx/Include
         - Drivers/CMSIS/Include
         - microRos/libmicroros/microros_include
+        - USB_DEVICE/App
+        - USB_DEVICE/Target
+        - Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+        - Middlewares/ST/STM32_USB_Device_Library/Core/Inc
       libList:
         - microRos/libmicroros
     excludeList:
-      - <virtual_root>/microROS/usb_cdc_transport.c
+      - <virtual_root>/microROS/dma_transport.c
     settings: {}
     toolchain: GCC
     toolchainConfigMap:

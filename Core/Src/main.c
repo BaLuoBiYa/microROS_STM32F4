@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -54,7 +55,7 @@ osThreadId_t microROSNodeHandle;
 const osThreadAttr_t microROSNode_attributes = {
     .name       = "microROSNode",
     .stack_size = 4000 * 4,
-    .priority   = (osPriority_t) osPriorityLow,
+    .priority   = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for display */
 osThreadId_t displayHandle;
@@ -82,6 +83,10 @@ const osMessageQueueAttr_t canTx_attributes = {
 osMessageQueueId_t canRxHandle;
 const osMessageQueueAttr_t canRx_attributes = {
     .name = "canRx"};
+/* Definitions for pubCAN */
+osTimerId_t pubCANHandle;
+const osTimerAttr_t pubCAN_attributes = {
+    .name = "pubCAN"};
 /* USER CODE BEGIN PV */
 static uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
 static HeapRegion_t xHeapRegions[] = {
@@ -99,6 +104,7 @@ static void MX_CAN1_Init(void);
 void StartMicroROS(void *argument);
 void StartDisplay(void *argument);
 void StartCAN(void *argument);
+void StartPubCAN(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -145,6 +151,7 @@ int main(void)
     HAL_IWDG_Refresh(&hiwdg);
     __HAL_RCC_CCMDATARAMEN_CLK_ENABLE();
     vPortDefineHeapRegions(xHeapRegions);
+    MX_USB_DEVICE_Init();
     /* USER CODE END 2 */
 
     /* Init scheduler */
@@ -157,6 +164,10 @@ int main(void)
     /* USER CODE BEGIN RTOS_SEMAPHORES */
     /* add semaphores, ... */
     /* USER CODE END RTOS_SEMAPHORES */
+
+    /* Create the timer(s) */
+    /* creation of pubCAN */
+    pubCANHandle = osTimerNew(StartPubCAN, osTimerPeriodic, NULL, &pubCAN_attributes);
 
     /* USER CODE BEGIN RTOS_TIMERS */
     /* start timers, add new ones, ... */
@@ -231,10 +242,10 @@ void SystemClock_Config(void)
     RCC_OscInitStruct.LSIState       = RCC_LSI_ON;
     RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
     RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM       = 25;
-    RCC_OscInitStruct.PLL.PLLN       = 336;
+    RCC_OscInitStruct.PLL.PLLM       = 15;
+    RCC_OscInitStruct.PLL.PLLN       = 144;
     RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ       = 4;
+    RCC_OscInitStruct.PLL.PLLQ       = 5;
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         Error_Handler();
     }
@@ -247,7 +258,7 @@ void SystemClock_Config(void)
     RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) {
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
         Error_Handler();
     }
 }
@@ -302,7 +313,7 @@ static void MX_IWDG_Init(void)
     /* USER CODE END IWDG_Init 1 */
     hiwdg.Instance       = IWDG;
     hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
-    hiwdg.Init.Reload    = 2999;
+    hiwdg.Init.Reload    = 1999;
     if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
         Error_Handler();
     }
@@ -431,6 +442,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 /* USER CODE END Header_StartMicroROS */
 __weak void StartMicroROS(void *argument)
 {
+    /* init code for USB_DEVICE */
+    MX_USB_DEVICE_Init();
     /* USER CODE BEGIN 5 */
     for (;;) {
         osDelay(1);
@@ -470,6 +483,14 @@ __weak void StartCAN(void *argument)
         osDelay(1);
     }
     /* USER CODE END StartCAN */
+}
+
+/* StartPubCAN function */
+__weak void StartPubCAN(void *argument)
+{
+    /* USER CODE BEGIN StartPubCAN */
+
+    /* USER CODE END StartPubCAN */
 }
 
 /**

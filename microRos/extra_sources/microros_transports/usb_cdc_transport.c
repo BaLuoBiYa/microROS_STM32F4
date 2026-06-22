@@ -1,163 +1,170 @@
-#include <rmw_microros/rmw_microros.h>
+#include <uxr/client/transport.h>
 
-#include "main.h"
+#include <rmw_microxrcedds_c/config.h>
+
 #include "cmsis_os.h"
-#include "usbd_cdc_if.h"
-#include "usbd_cdc.h"
+#include "main.h"
 
-#include <unistd.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
+#include <unistd.h>
+
+#include "usbd_cdc_if.h"
+#include "usb_device.h"
 
 #ifdef RMW_UXRCE_TRANSPORT_CUSTOM
 
-// --- USB CDC Handles ---
-extern USBD_CDC_ItfTypeDef USBD_Interface_fops_FS;
+// --- USB CDC Handles (defined by CubeMX in usb_device.c / usbd_cdc_if.c) ---
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
-// --- Reimplemented USB CDC callbacks ---
-static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum);
-static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length);
-static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len);
+    // --- micro-ROS Transports ---
+    #define USB_CDC_BUFFER_SIZE 2048
 
-// Line coding: Rate: 115200bps; CharFormat: 1 Stop bit; Parity: None; Data: 8 bits
-static uint8_t line_coding[7] = {0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08};
+// 缓冲区放在 CCMRAM（64KB @ 0x10000000），不占用 SRAM
+static uint8_t cdc_buffer[USB_CDC_BUFFER_SIZE] __attribute__((section(".ccmram")));
+static volatile size_t cdc_head  = 0;
+static volatile size_t cdc_tail  = 0;
+static volatile bool cdc_tx_done = true;
 
-// --- micro-ROS Transports ---
-#define USB_BUFFER_SIZE 1024
-#define WRITE_TIMEOUT_MS 100U
+// ===================================================================
+// CDC 回调（在 USB ISR 上下文中执行）
+// ===================================================================
 
-volatile uint8_t storage_buffer[USB_BUFFER_SIZE] = {0};
-volatile size_t it_head = 0;
-volatile size_t it_tail = 0;
-volatile bool g_write_complete = false;
-bool initialized = false;
+static int8_t cdc_receive_cb(uint8_t *Buf, uint32_t *Len)
+{
+    // 单字节逐入环形缓冲区
+    for (uint32_t i = 0; i < *Len; i++) {
+        size_t next = (cdc_tail + 1) % USB_CDC_BUFFER_SIZE;
+        if (next == cdc_head) {
+            // 缓冲区满，丢弃最旧字节
+            cdc_head = (cdc_head + 1) % USB_CDC_BUFFER_SIZE;
+        }
+        cdc_buffer[cdc_tail] = Buf[i];
+        cdc_tail             = next;
+    }
 
-// Transmission completed callback
-static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
+    USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+    USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+
+    return USBD_OK;
+}
+
+static int8_t cdc_transmit_cplt_cb(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 {
     (void) Buf;
     (void) Len;
     (void) epnum;
-
-    g_write_complete = true;
+    cdc_tx_done = true;
     return USBD_OK;
 }
 
-// USB CDC requests callback
-static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
+// ===================================================================
+// micro-ROS transport API
+// ===================================================================
+
+bool cubemx_transport_open(struct uxrCustomTransport *transport)
 {
-    switch(cmd)
-    {
-        case CDC_SET_LINE_CODING:
-        memcpy(line_coding, pbuf, sizeof(line_coding));
-        break;
+    (void) transport;
 
-        case CDC_GET_LINE_CODING:
-        memcpy(pbuf, line_coding, sizeof(line_coding));
-        break;
+    // 只覆盖 Receive 和 TransmitCplt，Control 沿用 CubeMX 默认实现
+    USBD_Interface_fops_FS.Receive      = cdc_receive_cb;
+    USBD_Interface_fops_FS.TransmitCplt = cdc_transmit_cplt_cb;
 
-        case CDC_SEND_ENCAPSULATED_COMMAND:
-        case CDC_GET_ENCAPSULATED_RESPONSE:
-        case CDC_SET_COMM_FEATURE:
-        case CDC_GET_COMM_FEATURE:
-        case CDC_CLEAR_COMM_FEATURE:
-        case CDC_SET_CONTROL_LINE_STATE:
-        case CDC_SEND_BREAK:
-        default:
-            break;
+    // 等待 USB 枚举完成（最长等 3 秒）
+    uint32_t wait_ms = 0;
+    while (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED) {
+        osDelay(10);
+        wait_ms += 10;
+        if (wait_ms >= 3000) {
+            return false;  // USB 未连接
+        }
     }
 
-    return USBD_OK;
-}
-
-// Data received callback
-static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
-{
-	USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-
-    // Circular buffer
-    if ((it_tail + *Len) > USB_BUFFER_SIZE)
-	{
-        size_t first_section = USB_BUFFER_SIZE - it_tail;
-        size_t second_section = *Len - first_section;
-
-		memcpy((void*) &storage_buffer[it_tail] , Buf, first_section);
-		memcpy((void*) &storage_buffer[0] , Buf, second_section);
-        it_tail = second_section;
-	}
-    else
-    {
-		memcpy((void*) &storage_buffer[it_tail] , Buf, *Len);
-		it_tail += *Len;
-    }
-
-	USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-
-	return (USBD_OK);
-}
-
-bool cubemx_transport_open(struct uxrCustomTransport * transport){
-
-    if (!initialized)
-    {
-        // USB is initialized on generated main code: Replace default callbacks here
-        USBD_Interface_fops_FS.Control = CDC_Control_FS;
-        USBD_Interface_fops_FS.Receive = CDC_Receive_FS;
-        USBD_Interface_fops_FS.TransmitCplt = CDC_TransmitCplt_FS;
-        initialized = true;
-    }
+    // 重置环形缓冲区指针，避免 session 重连时残留旧数据
+    cdc_head    = 0;
+    cdc_tail    = 0;
+    cdc_tx_done = true;
 
     return true;
 }
 
-bool cubemx_transport_close(struct uxrCustomTransport * transport){
+bool cubemx_transport_close(struct uxrCustomTransport *transport)
+{
+    (void) transport;
     return true;
 }
 
-size_t cubemx_transport_write(struct uxrCustomTransport* transport, uint8_t * buf, size_t len, uint8_t * err){
-	uint8_t ret = CDC_Transmit_FS(buf, len);
+size_t cubemx_transport_write(struct uxrCustomTransport *transport,
+                              uint8_t *buf, size_t len, uint8_t *err)
+{
+    (void) transport;
 
-	if (USBD_OK != ret)
-	{
-		return 0;
-	}
-
-    int64_t start = uxr_millis();
-    while(!g_write_complete && (uxr_millis() -  start) < WRITE_TIMEOUT_MS)
-    {
-    	vTaskDelay( 1 / portTICK_PERIOD_MS);
+    if (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED) {
+        return 0;
     }
 
-    size_t writed = g_write_complete ? len : 0;
-    g_write_complete = false;
+    // 等待上一次发送完成
+    uint32_t wait_ms = 0;
+    while (!cdc_tx_done) {
+        osDelay(1);
+        if (++wait_ms >= 100) {
+            return 0;
+        }
+    }
 
-	return writed;
+    cdc_tx_done = false;
+    uint8_t ret = CDC_Transmit_FS(buf, (uint16_t) len);
+    if (ret != USBD_OK) {
+        cdc_tx_done = true;
+        return 0;
+    }
+
+    // 等待本次发送完成
+    wait_ms = 0;
+    while (!cdc_tx_done) {
+        osDelay(1);
+        if (++wait_ms >= 100) {
+            cdc_tx_done = true;
+            return 0;
+        }
+    }
+
+    return len;
 }
 
-size_t cubemx_transport_read(struct uxrCustomTransport* transport, uint8_t* buf, size_t len, int timeout, uint8_t* err){
+size_t cubemx_transport_read(struct uxrCustomTransport *transport,
+                             uint8_t *buf, size_t len,
+                             int timeout, uint8_t *err)
+{
+    (void) transport;
 
-    int64_t start = uxr_millis();
-    size_t readed = 0;
+    int ms_used = 0;
+    do {
+        size_t head, tail;
+        __disable_irq();
+        head = cdc_head;
+        tail = cdc_tail;
+        __enable_irq();
 
-    do
-    {
-        if (it_head != it_tail)
-        {
-            while ((it_head != it_tail) && (readed < len)){
-                buf[readed] = storage_buffer[it_head];
-                it_head = (it_head + 1) % USB_BUFFER_SIZE;
-                readed++;
+        if (head != tail) {
+            size_t wrote = 0;
+            while (head != tail && wrote < len) {
+                buf[wrote] = cdc_buffer[head];
+                head       = (head + 1) % USB_CDC_BUFFER_SIZE;
+                wrote++;
             }
-
-            break;
+            __disable_irq();
+            cdc_head = head;
+            __enable_irq();
+            return wrote;
         }
 
-       vTaskDelay( 1 / portTICK_PERIOD_MS );
-    } while ((uxr_millis() -  start) < timeout);
+        ms_used++;
+        osDelay(1);
+    } while (ms_used < timeout);
 
-    return readed;
+    return 0;
 }
 
-#endif
+#endif  // RMW_UXRCE_TRANSPORT_CUSTOM

@@ -195,9 +195,9 @@ void StartMicroROS(void *argument)
     freeRTOS_allocator.zero_allocate   = microros_zero_allocate;
     (void) rcutils_set_default_allocator(&freeRTOS_allocator);
 
-    // custom transport
+    // custom transport (USB CDC)
     rmw_uros_set_custom_transport(
-        true, (void *) &huart1,
+        true, NULL,
         cubemx_transport_open, cubemx_transport_close,
         cubemx_transport_write, cubemx_transport_read);
 
