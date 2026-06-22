@@ -208,9 +208,9 @@ void StartMicroROS(void *argument)
 
     // ── main loop ────────────────────────────────────────────────
     for (;;) {
-        // HAL_IWDG_Refresh(&hiwdg);
-
         if (!node.inited) {
+            HAL_IWDG_Refresh(&hiwdg);
+
             // probe agent with quick ping — avoid 10s blocking in createNode
             if (rmw_uros_ping_agent(0, 1) == RMW_RET_OK) {
                 if (node.create(&node) && node.setup(&node)) {
