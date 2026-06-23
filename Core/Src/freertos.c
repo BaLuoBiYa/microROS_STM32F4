@@ -246,7 +246,7 @@ void StartMicroROS(void *argument)
             led_blue.toggle(&led_blue);
         }
 
-        osDelay(10);
+        osDelay(1);
     }
 }
 
@@ -271,4 +271,3 @@ void StartCAN(void *argument)
 }
 
 /* USER CODE END Application */
-
