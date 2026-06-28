@@ -91,13 +91,13 @@ void pump_ctl_callback(const void *req, void *res)
 
     res_->success = true;
     if (req_->data == true) {
-        led_red.on(&led_red);
-        pump.on(&pump);
+        led_red.off(&led_red);
+        pump.off(&pump);
         rosidl_runtime_c__String__assign(&res_->message, "on");
 
     } else {
-        led_red.off(&led_red);
-        pump.off(&pump);
+        led_red.on(&led_red);
+        pump.on(&pump);
         rosidl_runtime_c__String__assign(&res_->message, "off");
     }
 }
@@ -190,6 +190,8 @@ void StartMicroROS(void *argument)
     GPIOInit(&pump, PUMP_GPIO_Port, PUMP_Pin);
     GPIOInit(&led_red, LED_RED_GPIO_Port, LED_RED_Pin);
     GPIOInit(&led_blue, LED_BLUE_GPIO_Port, LED_BLUE_Pin);
+
+    pump.on(&pump);
 
     // custom allocator
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
