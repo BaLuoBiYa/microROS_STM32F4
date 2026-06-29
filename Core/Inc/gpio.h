@@ -8,10 +8,6 @@ struct GPIO {
     GPIO_TypeDef *port;
     uint16_t pin;
     uint8_t state;
-
-    void (*on)(GPIO *gpio);
-    void (*off)(GPIO *gpio);
-    void (*toggle)(GPIO *gpio);
 };
 
 void GPIOInit(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin);

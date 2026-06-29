@@ -5,11 +5,6 @@ void CANInit(CAN *can, CAN_HandleTypeDef *hcan)
     can->hcan       = hcan;
     can->rx_head    = 0;
     can->rx_tail    = 0;
-    can->init       = CANInit;
-    can->send       = CANSend;
-    can->receive    = CANReceive;
-    can->receiveISR = CANReceiveISR;
-    can->getRxFrame = CANGetRxFrame;
 
     CAN_FilterTypeDef filter;
     filter.FilterBank           = 0;                      // 过滤器组0

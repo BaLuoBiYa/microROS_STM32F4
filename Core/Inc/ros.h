@@ -49,7 +49,7 @@ typedef struct Node {
 #endif
 #if TIMER_NUM > 0
     rcl_timer_t timer[TIMER_NUM];
-    rclc_timer_callback_t timer_cb[TIMER_NUM];
+    rcl_timer_callback_t timer_cb[TIMER_NUM];
 #endif
     bool (*create)(Node *node);
     bool (*destroy)(Node *node);
@@ -85,7 +85,7 @@ bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms
 #endif
 
 #if TIMER_NUM > 0
-bool initTimer(Node *node, int idx, int64_t period_ms, rclc_timer_callback_t cb);
+bool initTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb);
 bool finiTimer(Node *node, int idx);
 #endif
 

@@ -22,12 +22,6 @@ typedef struct CAN {
     CANFrame_t rx_buf[CAN_BUF_DEPTH];
     volatile uint8_t rx_head; /* ISR 写索引 */
     volatile uint8_t rx_tail; /* 用户读索引 */
-
-    void (*init)(CAN *can, CAN_HandleTypeDef *hcan);
-    bool (*send)(CAN *can, CANFrame_t *frame);
-    void (*receive)(CAN *can);
-    void (*receiveISR)(CAN *can);
-    CANFrame_t *(*getRxFrame)(CAN *can);
 } CAN;
 
 void CANInit(CAN *can, CAN_HandleTypeDef *hcan);

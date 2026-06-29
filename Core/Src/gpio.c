@@ -6,10 +6,6 @@ void GPIOInit(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin)
     gpio->pin   = pin;
     gpio->state = 0;
 
-    gpio->on     = GPIOOn;
-    gpio->off    = GPIOOff;
-    gpio->toggle = GPIOToggle;
-
     HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
 }
 

@@ -24,10 +24,23 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "can.h"
+#include "arm.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
+/* 机械臂目标命令: 从 micro-ROS subscriber → CAN 控制线程 */
+typedef struct {
+    float height_mm;
+    float base_angle_rad;
+} ArmTargetCmd;
+
+/* 机械臂当前状态: 从 CAN 控制线程 → micro-ROS publisher */
+typedef struct {
+    float base_angle_rad;
+    float height_mm;
+} ArmStateMsg;
 
 /* USER CODE END PTD */
 
@@ -64,6 +77,13 @@ const osThreadAttr_t display_attributes = {
     .stack_size = 1000 * 4,
     .priority   = (osPriority_t) osPriorityLow,
 };
+/* Definitions for armController */
+osThreadId_t armControllerHandle;
+const osThreadAttr_t armController_attributes = {
+    .name       = "armController",
+    .stack_size = 2048 * 4,
+    .priority   = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for canManager */
 osThreadId_t canManagerHandle;
 const osThreadAttr_t canManager_attributes = {
@@ -83,15 +103,25 @@ const osMessageQueueAttr_t canTx_attributes = {
 osMessageQueueId_t canRxHandle;
 const osMessageQueueAttr_t canRx_attributes = {
     .name = "canRx"};
-/* Definitions for pubCAN */
-osTimerId_t pubCANHandle;
-const osTimerAttr_t pubCAN_attributes = {
-    .name = "pubCAN"};
+/* Definitions for armTarget */
+osMessageQueueId_t armTargetHandle;
+const osMessageQueueAttr_t armTarget_attributes = {
+    .name = "armTarget"};
+/* Definitions for armState */
+osMessageQueueId_t armStateHandle;
+const osMessageQueueAttr_t armState_attributes = {
+    .name = "armState"};
+/* Definitions for pubArmState */
+osTimerId_t pubArmStateHandle;
+const osTimerAttr_t pubArmState_attributes = {
+    .name = "pubArmState"};
 /* USER CODE BEGIN PV */
 static uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
 static HeapRegion_t xHeapRegions[] = {
     {ucHeapCCM, sizeof(ucHeapCCM)},
     {NULL, 0}};
+
+Arm_Control arm_control;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,8 +133,9 @@ static void MX_IWDG_Init(void);
 static void MX_CAN1_Init(void);
 void StartMicroROS(void *argument);
 void StartDisplay(void *argument);
+void StartArm(void *argument);
 void StartCAN(void *argument);
-void StartPubCAN(void *argument);
+void StartPubArmState(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -166,8 +197,8 @@ int main(void)
     /* USER CODE END RTOS_SEMAPHORES */
 
     /* Create the timer(s) */
-    /* creation of pubCAN */
-    pubCANHandle = osTimerNew(StartPubCAN, osTimerPeriodic, NULL, &pubCAN_attributes);
+    /* creation of pubArmState */
+    pubArmStateHandle = osTimerNew(StartPubArmState, osTimerPeriodic, NULL, &pubArmState_attributes);
 
     /* USER CODE BEGIN RTOS_TIMERS */
     /* start timers, add new ones, ... */
@@ -183,6 +214,12 @@ int main(void)
     /* creation of canRx */
     canRxHandle = osMessageQueueNew(16, sizeof(CANFrame_t), &canRx_attributes);
 
+    /* creation of armTarget */
+    armTargetHandle = osMessageQueueNew(4, sizeof(ArmTargetCmd), &armTarget_attributes);
+
+    /* creation of armState */
+    armStateHandle = osMessageQueueNew(4, sizeof(ArmStateMsg), &armState_attributes);
+
     /* USER CODE BEGIN RTOS_QUEUES */
     /* add queues, ... */
     /* USER CODE END RTOS_QUEUES */
@@ -193,6 +230,9 @@ int main(void)
 
     /* creation of display */
     displayHandle = osThreadNew(StartDisplay, NULL, &display_attributes);
+
+    /* creation of armController */
+    armControllerHandle = osThreadNew(StartArm, NULL, &armController_attributes);
 
     /* creation of canManager */
     canManagerHandle = osThreadNew(StartCAN, NULL, &canManager_attributes);
@@ -468,6 +508,23 @@ __weak void StartDisplay(void *argument)
     /* USER CODE END StartDisplay */
 }
 
+/* USER CODE BEGIN Header_StartArm */
+/**
+ * @brief Function implementing the armController thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_StartArm */
+__weak void StartArm(void *argument)
+{
+    /* USER CODE BEGIN StartArm */
+    /* Infinite loop */
+    for (;;) {
+        osDelay(1);
+    }
+    /* USER CODE END StartArm */
+}
+
 /* USER CODE BEGIN Header_StartCAN */
 /**
  * @brief Function implementing the canManager thread.
@@ -475,7 +532,7 @@ __weak void StartDisplay(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartCAN */
-__weak void StartCAN(void *argument)
+void StartCAN(void *argument)
 {
     /* USER CODE BEGIN StartCAN */
     /* Infinite loop */
@@ -485,12 +542,12 @@ __weak void StartCAN(void *argument)
     /* USER CODE END StartCAN */
 }
 
-/* StartPubCAN function */
-__weak void StartPubCAN(void *argument)
+/* StartPubArmState function */
+__weak void StartPubArmState(void *argument)
 {
-    /* USER CODE BEGIN StartPubCAN */
+    /* USER CODE BEGIN StartPubArmState */
 
-    /* USER CODE END StartPubCAN */
+    /* USER CODE END StartPubArmState */
 }
 
 /**

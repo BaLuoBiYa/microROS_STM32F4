@@ -30,16 +30,30 @@
 #include "lcd.h"
 #include "can.h"
 #include "gpio.h"
+#include "arm.h"
 
 #include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/u_int8.h>
-#include <std_msgs/msg/u_int8_multi_array.h>
+#include <std_msgs/msg/float32_multi_array.h>
 #include <std_srvs/srv/set_bool.h>
+
 #include <rosidl_runtime_c/string_functions.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
+/* 机械臂目标命令: micro-ROS subscriber → CAN 控制线程 */
+typedef struct {
+    float height_mm;
+    float base_angle_rad;
+} ArmTargetCmd;
+
+/* 机械臂当前状态: CAN 控制线程 → micro-ROS publisher */
+typedef struct {
+    float base_angle_rad;
+    float height_mm;
+} ArmStateMsg;
 
 /* USER CODE END PTD */
 
@@ -62,6 +76,21 @@ extern CAN_HandleTypeDef hcan1;
 extern osMessageQueueId_t canTxHandle;
 extern osMessageQueueId_t canRxHandle;
 extern osMessageQueueId_t dispNumHandle;
+extern osMessageQueueId_t armTargetHandle;
+extern osMessageQueueId_t armStateHandle;
+
+extern Arm_Control arm_control; /* 定义在 main.c */
+
+// ── entity setup ──
+static std_msgs__msg__UInt8 disp_msg;
+static std_msgs__msg__Empty alive_msg;
+static std_msgs__msg__Float32MultiArray target_msg;
+static float target_data_buf[2];
+
+static std_srvs__srv__SetBool_Request svc_req;
+static std_srvs__srv__SetBool_Response svc_res;
+
+static Node node;
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -118,65 +147,80 @@ void dispNum_callback(const void *msg)
     osMessageQueuePut(dispNumHandle, &disp_num, 0, 0);
 }
 
-// ── can_tx callback ──
-void canTx_callback(const void *msg)
+// ── arm_target callback (subscriber) ──
+void arm_target_callback(const void *msg)
 {
-    std_msgs__msg__UInt8MultiArray *msg_ = (std_msgs__msg__UInt8MultiArray *) msg;
-    if (msg_->data.size != 13) {
-        return;
+    const std_msgs__msg__Float32MultiArray *m =
+        (const std_msgs__msg__Float32MultiArray *) msg;
+    if (m->data.size >= 2) {
+        ArmTargetCmd cmd = {
+            .height_mm      = m->data.data[0],
+            .base_angle_rad = m->data.data[1],
+        };
+        osMessageQueuePut(armTargetHandle, &cmd, 0, 0);
     }
-    CANFrame_t frame;
-    memcpy(frame.raw, msg_->data.data, 13);
-    osMessageQueuePut(canTxHandle, &frame, 0, 0);
 }
 
-// ── entity setup ──
-static std_msgs__msg__UInt8 disp_msg;
-static std_msgs__msg__Empty alive_msg;
-static std_msgs__msg__UInt8MultiArray can_tx_msg;
-static std_msgs__msg__UInt8MultiArray can_rx_msg;
-static uint8_t can_tx_data[13]; /* 预分配 UInt8MultiArray 序列缓冲 */
-
-static std_srvs__srv__SetBool_Request svc_req;
-static std_srvs__srv__SetBool_Response svc_res;
-
-bool setupEntities(Node *node)
+// ── arm_state publisher (FreeRTOS timer callback, 100ms) ──
+void StartPubArmState(void *argument)
 {
+    (void) argument;
+
+    ArmStateMsg s;
+    bool has_data = false;
+    while (osMessageQueueGet(armStateHandle, &s, NULL, 0) == osOK) {
+        has_data = true;
+    }
+    if (!has_data) {
+        return;
+    }
+
+    static float state_buf[2];
+    static std_msgs__msg__Float32MultiArray state_msg;
+    state_msg.data.capacity = 2;
+    state_msg.data.size     = 2;
+    state_msg.data.data     = state_buf;
+    state_buf[0]            = s.base_angle_rad;
+    state_buf[1]            = s.height_mm;
+
+    if (node.inited) {
+        node.publish(&node, 0, &state_msg);
+    }
+}
+
+bool setupEntities(Node *n)
+{
+    (void) n;
     // 重连时重置 response 字符串，避免复用已释放的内存
     rosidl_runtime_c__String__fini(&svc_res.message);
     rosidl_runtime_c__String__init(&svc_res.message);
 
-    /* 预分配 UInt8MultiArray 序列内存，确保 deserialize 不失败 */
-    can_tx_msg.data.data     = can_tx_data;
-    can_tx_msg.data.capacity = 13;
-    can_tx_msg.data.size     = 0;
-
-    /* 重连时 fini 上次残留，重新初始化发布用的 can_rx_msg */
-    std_msgs__msg__UInt8MultiArray__fini(&can_rx_msg);
-    std_msgs__msg__UInt8MultiArray__init(&can_rx_msg);
+    /* 预分配 arm_target subscriber 序列内存 */
+    target_msg.data.data     = target_data_buf;
+    target_msg.data.capacity = 2;
+    target_msg.data.size     = 0;
 
     bool ok;
-    ok = initSubscriber(node, 0,
+    ok = initSubscriber(&node, 0,
                         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
                         "STM32/disp_num",
                         &disp_msg, dispNum_callback);
 
-
-    ok = ok && initSubscriber(node, 1,
+    ok = ok && initSubscriber(&node, 1,
                               ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
                               "STM32/alive",
                               &alive_msg, alive_callback);
 
-    ok = ok && initSubscriber(node, 2,
-                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
-                              "STM32/can_tx",
-                              &can_tx_msg, canTx_callback);
+    ok = ok && initSubscriber(&node, 2,
+                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+                              "/arm_target",
+                              &target_msg, arm_target_callback);
 
-    ok = ok && initPublisher(node, 0,
-                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
-                             "STM32/can_rx");
+    ok = ok && initPublisher(&node, 0,
+                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+                             "/arm_state");
 
-    ok = ok && initService(node, 0,
+    ok = ok && initService(&node, 0,
                            ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                            "STM32/pump_ctrl",
                            &svc_req, &svc_res,
@@ -208,7 +252,6 @@ void StartMicroROS(void *argument)
         cubemx_transport_write, cubemx_transport_read);
 
     // ── node ─────────────────────────────────────────────────────
-    static Node node;
     initNode(&node);
     node.setup = setupEntities;
 
@@ -223,7 +266,6 @@ void StartMicroROS(void *argument)
                     node.inited      = true;
                     node.error_count = 0;
                 } else {
-                    // partial init — clean up
                     if (node.inited) {
                         node.destroy(&node);
                     }
@@ -234,41 +276,70 @@ void StartMicroROS(void *argument)
         }
 
         node.spin(&node);
-
-        CANFrame_t rx_frame;
-        bool has_frame = false;
-        while (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 0) == osOK) {
-            has_frame = true;
-        }
-        if (has_frame) {
-            can_rx_msg.data.data     = rx_frame.raw;
-            can_rx_msg.data.size     = 13;
-            can_rx_msg.data.capacity = 13;
-            node.publish(&node, 0, (void *) &can_rx_msg);
-            led_blue.toggle(&led_blue);
-        }
-
         osDelay(1);
     }
 }
 
 void StartCAN(void *argument)
 {
+    (void) argument;
     CANInit(&can1, &hcan1);
-    CANFrame_t tx_frame;
+
     for (;;) {
-        /* drain all RX frames from ISR ring buffer */
+        /* 1. ISR 环缓冲 → canRxHandle 队列 */
         CANFrame_t *rx_frame;
         while ((rx_frame = can1.getRxFrame(&can1)) != NULL) {
             osMessageQueuePut(canRxHandle, rx_frame, 0, 0);
         }
 
-        /* non-blocking TX */
+        /* 2. canTxHandle 队列 → CAN 总线发送 (非阻塞) */
+        CANFrame_t tx_frame;
         if (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 0) == osOK) {
             can1.send(&can1, &tx_frame);
         }
 
-        osDelay(1); /* yield CPU to microROS thread */
+        osDelay(1);
+    }
+}
+
+void StartArm(void *argument)
+{
+    (void) argument;
+
+    /* 初始化 ARM 控制实例, 绑定 CAN 收发队列 */
+    Arm_Init(&arm_control, NULL);
+    arm_control.canTxQueue = canTxHandle;
+    arm_control.canRxQueue = canRxHandle;
+
+    const TickType_t period_ticks =
+        (TickType_t) (arm_control.cfg.loop_period_s * 1000.0f);
+    TickType_t last_wake = osKernelGetTickCount();
+
+    for (;;) {
+        /* 1. 从 canRxHandle 取帧喂入 arm 解码 */
+        CANFrame_t rx_frame;
+        while (osMessageQueueGet(canRxHandle, &rx_frame, NULL, 0) == osOK) {
+            Arm_FeedRxFrame(&arm_control, &rx_frame);
+        }
+
+        /* 2. 消费 arm_target 命令 */
+        ArmTargetCmd cmd;
+        while (osMessageQueueGet(armTargetHandle, &cmd, NULL, 0) == osOK) {
+            Arm_SetTarget(&arm_control, cmd.base_angle_rad, cmd.height_mm);
+        }
+
+        /* 3. 单步控制: 解码 → PID → 组帧 → 推入 canTxHandle */
+        Arm_Update(&arm_control);
+
+        /* 4. 生产状态消息供 micro-ROS 发布 */
+        ArmStateMsg state = {
+            .base_angle_rad = Arm_GetBaseAngle(&arm_control),
+            .height_mm      = Arm_GetHeightMm(&arm_control),
+        };
+        osMessageQueuePut(armStateHandle, &state, 0, 0);
+
+        last_wake += (period_ticks > 0 ? period_ticks : 1);
+        osDelayUntil(last_wake);
     }
 }
 

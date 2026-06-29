@@ -185,7 +185,8 @@ void spinNode(Node *node)
 
 #if TIMER_NUM > 0
     for (int i = 0; i < TIMER_NUM; i++) {
-        if (rcl_timer_is_ready(&node->timer[i])) {
+        bool is_ready = false;
+        if (rcl_timer_is_ready(&node->timer[i], &is_ready) == RCL_RET_OK && is_ready) {
             rcl_timer_call(&node->timer[i]);
         }
     }
@@ -297,14 +298,15 @@ bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms
 
 // ── Timer ────────────────────────────────────────────────────────
 #if TIMER_NUM > 0
-bool initTimer(Node *node, int idx, int64_t period_ms, rclc_timer_callback_t cb)
+bool initTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb)
 {
     assert(idx >= 0 && idx < TIMER_NUM);
     node->timer_cb[idx] = cb;
-    return rclc_timer_init_default(&node->timer[idx],
-                                   &node->support,
-                                   RCL_MS_TO_NS((uint64_t) period_ms),
-                                   cb) == RCL_RET_OK;
+    return rclc_timer_init_default2(&node->timer[idx],
+                                    &node->support,
+                                    RCL_MS_TO_NS((uint64_t) period_ms),
+                                    cb,
+                                    true) == RCL_RET_OK;
 }
 
 bool finiTimer(Node *node, int idx)
