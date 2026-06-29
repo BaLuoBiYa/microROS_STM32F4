@@ -1,7 +1,7 @@
 # 完整选项: https://clang.llvm.org/docs/ClangFormatStyleOptions.html
 ---
 # 基础风格: Microsoft (BSD 风格大括号)
-BasedOnStyle: Microsoft
+BasedOnStyle: LLVM
 IndentWidth: 4
 UseTab: Never
 TabWidth: 4

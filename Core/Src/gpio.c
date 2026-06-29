@@ -1,6 +1,6 @@
 #include "gpio.h"
 
-void GPIOInit(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin)
+void GPIO_Init(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin)
 {
     gpio->port  = port;
     gpio->pin   = pin;
@@ -9,19 +9,19 @@ void GPIOInit(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin)
     HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
 }
 
-void GPIOOn(GPIO *gpio)
+void GPIO_On(GPIO *gpio)
 {
     HAL_GPIO_WritePin(gpio->port, gpio->pin, GPIO_PIN_SET);
     gpio->state = 1;
 }
 
-void GPIOOff(GPIO *gpio)
+void GPIO_Off(GPIO *gpio)
 {
     HAL_GPIO_WritePin(gpio->port, gpio->pin, GPIO_PIN_RESET);
     gpio->state = 0;
 }
 
-void GPIOToggle(GPIO *gpio)
+void GPIO_Toggle(GPIO *gpio)
 {
     gpio->state = !gpio->state;
     HAL_GPIO_WritePin(gpio->port, gpio->pin, gpio->state ? GPIO_PIN_SET : GPIO_PIN_RESET);

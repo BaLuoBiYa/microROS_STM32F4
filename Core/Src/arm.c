@@ -49,12 +49,10 @@ const Arm_Config Arm_Config_Default = {
     .c620_omega_out_max   = 1.0f,
     .c620_omega_dead_zone = 0.0f,
 
-    /* 斜坡 */
-    .loop_period_s        = 0.001f,
-    .base_angle_rate_up   = 1.5f,
-    .base_angle_rate_down = 1.5f,
-    .height_rate_up       = 80.0f,
-    .height_rate_down     = 80.0f,
+    /* 五次多项式轨迹 */
+    .loop_period_s      = 0.001f,
+    .base_angle_max_vel = 3.0f,
+    .height_max_vel     = 80.0f,
 
     /* 初始目标 */
     .target_base_angle = 0.0f,
@@ -189,60 +187,80 @@ static void pid_calc(Arm_PID *pid)
     pid->pre_error  = error;
 }
 
-/* ========== Slope ======================================================== */
+/* ========== 五次多项式轨迹 (quintic S-curve) ============================== */
 
-static void slope_init_by_rate(Arm_Slope *s,
-                               float inc_per_sec,
-                               float dec_per_sec,
-                               float period_s,
-                               Arm_SlopeFirst first)
+/**
+ * @brief 初始化轨迹规划器
+ * @param max_vel  最大速度 (单位/s), 五次峰值 = 平均 * 1.875
+ */
+static void slope_init(Arm_Slope *s, float max_vel, float period_s)
 {
     memset(s, 0, sizeof(*s));
-    if (period_s > 0.0f) {
-        s->increase_value = inc_per_sec * period_s;
-        s->decrease_value = dec_per_sec * period_s;
-    }
-    s->first_mode = first;
+    s->max_vel = max_vel;
+    s->dt      = period_s;
 }
 
+/**
+ * @brief 重置轨迹到指定值 (打断当前轨迹)
+ */
 static void slope_reset(Arm_Slope *s, float value)
 {
-    s->out          = value;
-    s->now_planning = value;
-    s->now_real     = value;
+    s->out         = value;
+    s->target      = value;
+    s->start_val   = value;
+    s->prev_target = value;
+    s->elapsed     = 0.0f;
+    s->duration    = 0.0f;
+    s->active      = false;
 }
 
+/**
+ * @brief 每控制周期调用, 根据 target 变化自动生成五次多项式轨迹
+ *
+ * 五次多项式: s(t) = 10t³ - 15t⁴ + 6t⁵  (归一化 t ∈ [0,1])
+ * 边界条件: s(0)=0, s'(0)=0, s''(0)=0, s(1)=1, s'(1)=0, s''(1)=0
+ * 峰值速度 v_peak = 1.875 * D / T → T = 1.875 * |D| / v_max
+ */
 static void slope_update(Arm_Slope *s)
 {
-    float base = s->now_planning;
-
-    /* REAL 优先: 真实值在 [规划值, 目标值] 之间时对齐到真实值 */
-    if (s->first_mode == Arm_Slope_First_REAL) {
-        bool real_between = (s->target >= s->now_real && s->now_real >= base) ||
-                            (s->target <= s->now_real && s->now_real <= base);
-        if (real_between) {
-            base = s->now_real;
+    /* 目标变化 → 启动新轨迹 */
+    if (s->target != s->prev_target) {
+        s->start_val   = s->out;
+        s->prev_target = s->target;
+        float D        = s->target - s->start_val;
+        if (fabsf(D) < 1e-6f || s->max_vel <= 0.0f) {
+            s->out    = s->target;
+            s->active = false;
+            return;
         }
+        /* T = 1.875 * |D| / v_max, 保证峰值速度不超过 v_max */
+        s->duration = 1.875f * fabsf(D) / s->max_vel;
+        if (s->duration < s->dt) {
+            s->duration = s->dt;
+        }
+        s->elapsed = 0.0f;
+        s->active  = true;
     }
 
-    float diff = s->target - base;
-    if (diff == 0.0f) {
-        s->out          = base;
-        s->now_planning = s->out;
+    if (!s->active) {
         return;
     }
 
-    bool away_from_zero = (base == 0.0f) ||
-                          (base > 0.0f && diff > 0.0f) ||
-                          (base < 0.0f && diff < 0.0f);
-    float step = away_from_zero ? s->increase_value : s->decrease_value;
-
-    if (fabsf(diff) <= step || step <= 0.0f) {
-        s->out = s->target;
-    } else {
-        s->out = base + (diff > 0.0f ? step : -step);
+    s->elapsed += s->dt;
+    if (s->elapsed >= s->duration) {
+        s->out    = s->target;
+        s->active = false;
+        return;
     }
-    s->now_planning = s->out;
+
+    /* 归一化时间 t∈[0,1), 五次多项式 */
+    float t  = s->elapsed / s->duration;
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float t4 = t3 * t;
+    float t5 = t4 * t;
+    float D  = s->target - s->start_val;
+    s->out   = s->start_val + D * (10.0f * t3 - 15.0f * t4 + 6.0f * t5);
 }
 
 /* ========== DM 4310 电机 ================================================= */
@@ -268,22 +286,20 @@ static void dm_output(const Arm_Control *arm,
 {
     const Arm_DM_Motor *dm = &arm->dm;
 
-    /* 浮点 → 整数映射 */
-    uint16_t tmp_angle  = (uint16_t) float_to_int(ctrl_angle, -dm->angle_max, dm->angle_max, 0, 65535);
+    /* 浮点 → 整数映射 (对齐原始代码: [-angle_max, +angle_max] → [0x7FFF, 0xFFFF]) */
+    uint16_t tmp_angle  = (uint16_t) float_to_int(ctrl_angle, -dm->angle_max, dm->angle_max, 0x7FFF, 0xFFFF);
     uint16_t tmp_omega  = (uint16_t) float_to_int(ctrl_omega, -dm->omega_max, dm->omega_max, 0, 4095);
     uint16_t tmp_torque = (uint16_t) float_to_int(ctrl_torque, -dm->torque_max, dm->torque_max, 0, 4095);
     uint16_t tmp_kp     = (uint16_t) float_to_int(kp, 0.0f, 500.0f, 0, 4095);
     uint16_t tmp_kd     = (uint16_t) float_to_int(kd, 0.0f, 5.0f, 0, 4095);
 
-    /* 角度 16-bit 大小端翻转 */
-    uint16_t angle_rev = ((tmp_angle & 0xFF) << 8) | (tmp_angle >> 8);
-
     CANFrame_t frame;
     frame.CANFrame.id  = dm->can_tx_id;
     frame.CANFrame.dlc = 8;
 
-    frame.CANFrame.data[0] = (uint8_t) (angle_rev >> 8);
-    frame.CANFrame.data[1] = (uint8_t) (angle_rev & 0xFF);
+    /* 角度 16-bit: */
+    frame.CANFrame.data[0] = (uint8_t) (tmp_angle >> 8);
+    frame.CANFrame.data[1] = (uint8_t) (tmp_angle & 0xFF);
     frame.CANFrame.data[2] = (uint8_t) (tmp_omega >> 4);
     frame.CANFrame.data[3] = (uint8_t) (((tmp_omega & 0x0F) << 4) | (tmp_kp >> 8));
     frame.CANFrame.data[4] = (uint8_t) (tmp_kp & 0xFF);
@@ -362,9 +378,6 @@ static void arm_feed_single_frame(Arm_Control *arm, const CANFrame_t *frame)
 
 void Arm_FeedRxFrame(Arm_Control *arm, const CANFrame_t *frame)
 {
-    if (!arm->inited) {
-        return;
-    }
     arm_feed_single_frame(arm, frame);
 }
 
@@ -380,17 +393,29 @@ static void arm_decode_latest(Arm_Control *arm)
     if (dm_has_new) {
         dm->control_status = (ArmDM_ControlStatus) dm_raw_status;
 
-        int32_t delta = (int32_t) dm_raw_enc - (int32_t) dm->pre_encoder;
-        if (delta < -(1 << 15)) {
-            dm->total_round++;
-        } else if (delta > (1 << 15)) {
-            dm->total_round--;
+        if (!dm->encoder_primed) {
+            /* 首帧: 记录当前编码器为基准, 不计算圈数增量 */
+            dm->pre_encoder    = dm_raw_enc;
+            dm->total_encoder  = (int32_t) dm_raw_enc;
+            dm->total_round    = 0;
+            dm->encoder_primed = true;
+        } else {
+            int32_t delta = (int32_t) dm_raw_enc - (int32_t) dm->pre_encoder;
+            /* DM MIT 范围 [0x7FFF, 0xFFFF] 跨度 32768, 半程 16384 为翻转阈值 */
+            if (delta < -(1 << 14)) {
+                dm->total_round++;
+            } else if (delta > (1 << 14)) {
+                dm->total_round--;
+            }
+            dm->total_encoder = dm->total_round * 32768 +
+                                (int32_t) dm_raw_enc;
+            dm->pre_encoder = dm_raw_enc;
         }
-        dm->total_encoder = dm->total_round * (1 << 16) +
-                            (int32_t) dm_raw_enc - ((1 << 15) - 1);
 
-        dm->now_angle = (float) dm->total_encoder / 65535.0f *
-                        dm->angle_max * 2.0f;
+        /* now_angle 使用 int_to_float, 与 dm_output 的 float_to_int 互逆 */
+        dm->now_angle = int_to_float((int32_t) dm_raw_enc, 0x7FFF, 0xFFFF,
+                                     -dm->angle_max, dm->angle_max) +
+                        (float) dm->total_round * 2.0f * dm->angle_max;
         dm->now_omega   = int_to_float((int32_t) dm_raw_omega, 0, 4095,
                                        -dm->omega_max, dm->omega_max);
         dm->now_torque  = int_to_float((int32_t) dm_raw_torque, 0, 4095,
@@ -408,14 +433,23 @@ static void arm_decode_latest(Arm_Control *arm)
             m->angle_clear_flag = 0;
         }
 
-        int16_t delta = (int16_t) (c620_raw_enc - m->pre_encoder);
-        if (delta < -(int16_t) (C620_ENCODER_NUM_PER_ROUND / 2)) {
-            m->total_round++;
-        } else if (delta > (int16_t) (C620_ENCODER_NUM_PER_ROUND / 2)) {
-            m->total_round--;
+        if (!m->encoder_primed) {
+            /* 首帧: 记录当前编码器为基准, 不计算圈数增量 */
+            m->pre_encoder    = c620_raw_enc;
+            m->total_encoder  = (int32_t) c620_raw_enc;
+            m->total_round    = 0;
+            m->encoder_primed = true;
+        } else {
+            int16_t delta = (int16_t) (c620_raw_enc - m->pre_encoder);
+            if (delta < -(int16_t) (C620_ENCODER_NUM_PER_ROUND / 2)) {
+                m->total_round++;
+            } else if (delta > (int16_t) (C620_ENCODER_NUM_PER_ROUND / 2)) {
+                m->total_round--;
+            }
+            m->total_encoder = m->total_round * (int32_t) C620_ENCODER_NUM_PER_ROUND +
+                               (int32_t) c620_raw_enc - (int32_t) m->clear_encoder;
+            m->pre_encoder = c620_raw_enc;
         }
-        m->total_encoder = m->total_round * (int32_t) C620_ENCODER_NUM_PER_ROUND +
-                           (int32_t) c620_raw_enc - (int32_t) m->clear_encoder;
 
         m->now_angle = (float) m->total_encoder /
                        (float) C620_ENCODER_NUM_PER_ROUND *
@@ -630,29 +664,94 @@ void Arm_Init(Arm_Control *arm, const Arm_Config *cfg)
     /* 分配 C620 TX 缓冲指针 (静态缓冲由 update 内提供) */
     arm->c620.tx_data_ptr = NULL; /* 延迟到首次 update 绑定 */
 
-    /* ── 斜坡 ── */
-    slope_init_by_rate(&arm->base_angle_slope,
-                       c->base_angle_rate_up, c->base_angle_rate_down,
-                       c->loop_period_s, Arm_Slope_First_REAL);
-    slope_init_by_rate(&arm->height_slope,
-                       c->height_rate_up, c->height_rate_down,
-                       c->loop_period_s, Arm_Slope_First_REAL);
-    arm->base_slope_primed = false;
+    /* ── 五次多项式轨迹 ── */
+    slope_init(&arm->base_angle_slope, c->base_angle_max_vel, c->loop_period_s);
+    slope_init(&arm->height_slope, c->height_max_vel, c->loop_period_s);
 
-    /* ── 归零 ── */
-    arm->homing_state             = Arm_HeightHoming_IDLE;
-    arm->homing_direction_decided = false;
+    /* inited 由 Arm_Homing 完成归零后置 true */
+    arm->inited = false;
+}
 
-    /* ── 设置初始目标 ── */
-    Arm_SetTarget(arm, c->target_base_angle, c->target_height_mm);
+/**
+ * @brief 执行归零: DM 使能+回零, C620 升降堵转归零
+ *
+ * 阻塞运行, 完成后 arm 处于零位 (DM angle=0, C620 height=0).
+ * 调用前 must have canTxQueue/canRxQueue bound.
+ */
+void Arm_Homing(Arm_Control *arm)
+{
+    const float dt_s             = arm->cfg.loop_period_s;
+    const TickType_t delay_ticks = (TickType_t) (dt_s * 1000.0f);
 
-    /* ── 使能 DM 电机 ── */
+    /* C620 TX 缓冲 */
+    static uint8_t c620_tx_buf_200[8] = {0};
+    static uint8_t c620_tx_buf_1ff[8] = {0};
+
+    /* 绑定 TX 指针 */
+    arm->c620.tx_data_ptr = c620_allocate_tx_data(
+        arm->c620.can_rx_id, c620_tx_buf_200, c620_tx_buf_1ff);
+
+    /* ── 1. DM 使能 ── */
     dm_send_cmd(arm, dm_cmd_clear_error);
     dm_send_cmd(arm, dm_cmd_enable);
     arm->dm_enable_retry_timer = 0.0f;
     arm->dm_was_enabled        = false;
 
-    arm->inited = true;
+    /* 等待 enable 反馈帧 */
+    {
+        static const int kMaxRetries = 50;
+        int retry                    = 0;
+        while (retry < kMaxRetries) {
+            CANFrame_t rx;
+            while (osMessageQueueGet(arm->canRxQueue, &rx, NULL, 0) == osOK) {
+                Arm_FeedRxFrame(arm, &rx);
+            }
+            arm_decode_latest(arm);
+            check_and_retry_dm_enable(arm, dt_s);
+
+            if (arm->dm.control_status == ArmDM_Status_ENABLE) {
+                break;
+            }
+            retry++;
+            osDelay(delay_ticks > 0 ? delay_ticks : 1);
+        }
+    }
+
+    /* ── 2. DM: 信任绝对值编码器, 以当前位置为起点, 不旋转归零 ── */
+    slope_reset(&arm->base_angle_slope, arm->dm.now_angle);
+    arm->base_angle_slope.target = arm->dm.now_angle;
+
+    /* ── 3. C620 升降归零 (期间持续给 DM 发送 MIT 帧以保持使能) ── */
+    arm->homing_state             = Arm_HeightHoming_IDLE;
+    arm->homing_direction_decided = false;
+
+    while (arm->homing_state != Arm_HeightHoming_COMPLETE) {
+        CANFrame_t rx;
+        while (osMessageQueueGet(arm->canRxQueue, &rx, NULL, 0) == osOK) {
+            Arm_FeedRxFrame(arm, &rx);
+        }
+        arm_decode_latest(arm);
+        check_and_retry_dm_enable(arm, dt_s);
+
+        slope_update(&arm->base_angle_slope);
+
+        dm_output(arm,
+                  arm->base_angle_slope.out,
+                  arm->cfg.dm_target_omega,
+                  arm->cfg.dm_target_torque,
+                  arm->cfg.dm_kp,
+                  arm->cfg.dm_kd);
+
+        update_height_homing(arm, dt_s, c620_tx_buf_200, c620_tx_buf_1ff);
+        osDelay(delay_ticks);
+    }
+
+    /* ── 4. 就绪: 用当前实际位置 prime 斜坡, 确保 Arm_Update 首帧不乱动 ── */
+    slope_reset(&arm->base_angle_slope, arm->dm.now_angle);
+    arm->base_angle_slope.target = arm->dm.now_angle;
+
+    arm->height_slope.target = 0.0f;
+    arm->inited              = true;
 }
 
 /**
@@ -694,39 +793,16 @@ void Arm_Update(Arm_Control *arm)
     /* ── 2. DM 使能检查与重试 ── */
     check_and_retry_dm_enable(arm, dt_s);
 
-    /* ── 3. 旋转斜坡 (与归零无关) ── */
-    if (!arm->base_slope_primed) {
-        slope_reset(&arm->base_angle_slope, arm->dm.now_angle);
-        arm->base_slope_primed = true;
-    }
-    arm->base_angle_slope.now_real = arm->dm.now_angle;
+    /* ── 3. 旋转五次多项式轨迹 ── */
     slope_update(&arm->base_angle_slope);
 
-    /* ── 4. 升降归零状态机 ── */
-    update_height_homing(arm, dt_s, c620_tx_buf_200, c620_tx_buf_1ff);
-
-    if (arm->homing_state != Arm_HeightHoming_COMPLETE) {
-        /* 归零未完成: 升降由 homing 直接控电流, 旋转正常输出 */
-        dm_output(arm,
-                  arm->base_angle_slope.out,
-                  arm->cfg.dm_target_omega,
-                  arm->cfg.dm_target_torque,
-                  arm->cfg.dm_kp,
-                  arm->cfg.dm_kd);
-        return;
-    }
-
-    /* ── 5. 归零完成后: 正常升降控制 ── */
-    float raw_angle  = arm->c620.now_angle;
-    float eff_height = raw_lift_angle_to_height_mm(arm, raw_angle);
-
-    arm->height_slope.now_real = eff_height;
+    /* ── 4. 升降控制 ── */
     slope_update(&arm->height_slope);
 
     float height_cmd_mm    = arm->height_slope.out;
     arm->c620.target_angle = height_mm_to_raw_lift_angle(arm, height_cmd_mm);
 
-    /* ── 6. 发送电机指令 ── */
+    /* ── 5. 发送电机指令 ── */
     dm_output(arm,
               arm->base_angle_slope.out,
               arm->cfg.dm_target_omega,

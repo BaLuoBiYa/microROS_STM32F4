@@ -84,12 +84,6 @@ typedef enum {
     Arm_HeightHoming_COMPLETE     = 3,
 } Arm_HeightHomingState;
 
-/** 斜坡优先模式 */
-typedef enum {
-    Arm_Slope_First_REAL   = 0, /* 真实值优先 */
-    Arm_Slope_First_TARGET = 1, /* 硬规划 */
-} Arm_SlopeFirst;
-
 /* ========== PID 控制器 ================================================== */
 
 typedef struct {
@@ -106,16 +100,18 @@ typedef struct {
     bool deadband;
 } Arm_PID;
 
-/* ========== 斜坡规划器 ================================================== */
+/* ========== 五次多项式轨迹规划器 ========================================== */
 
 typedef struct {
-    float out;
-    float now_planning;
-    float now_real;
-    float increase_value; /* 每周期远离零的最大步长 */
-    float decrease_value; /* 每周期靠近零的最大步长 */
-    float target;
-    Arm_SlopeFirst first_mode;
+    float out;         /* 当前输出 */
+    float target;      /* 目标终点 */
+    float start_val;   /* 轨迹起点 */
+    float prev_target; /* 上一帧目标 (检测变化) */
+    float elapsed;     /* 轨迹已用时间 (s) */
+    float duration;    /* 轨迹总时长 (s)   */
+    float max_vel;     /* 最大速度 (单位/s) */
+    float dt;          /* 时间步长 (s)     */
+    bool active;       /* 轨迹进行中       */
 } Arm_Slope;
 
 /* ========== DM 4310 电机 (旋转关节, MIT 模式) ============================ */
@@ -140,6 +136,7 @@ typedef struct {
     uint16_t pre_encoder;
     int32_t total_encoder;
     int32_t total_round;
+    bool encoder_primed; /* 首帧编码器已基准化    */
 
     /* ── 接收标志 / DMA ISR 去抖动 ── */
     uint32_t flag;
@@ -170,6 +167,7 @@ typedef struct {
     uint16_t clear_encoder;
     int32_t total_encoder;
     int32_t total_round;
+    bool encoder_primed; /* 首帧编码器已基准化    */
 
     /* ── 目标值 ── */
     float target_angle;
@@ -216,12 +214,10 @@ typedef struct {
     float c620_omega_kp, c620_omega_ki, c620_omega_kd, c620_omega_kf;
     float c620_omega_i_out_max, c620_omega_out_max, c620_omega_dead_zone;
 
-    /* ── 斜坡 ── */
+    /* ── 五次多项式轨迹 ── */
     float loop_period_s;
-    float base_angle_rate_up;   /* rad/s */
-    float base_angle_rate_down; /* rad/s */
-    float height_rate_up;       /* mm/s  */
-    float height_rate_down;     /* mm/s  */
+    float base_angle_max_vel; /* rad/s */
+    float height_max_vel;     /* mm/s  */
 
     /* ── 初始目标 ── */
     float target_base_angle; /* rad */
@@ -242,10 +238,9 @@ typedef struct {
     Arm_DM_Motor dm;
     Arm_DJI_MotorC620 c620;
 
-    /* 斜坡 */
+    /* 五次多项式轨迹 */
     Arm_Slope base_angle_slope;
     Arm_Slope height_slope;
-    bool base_slope_primed;
 
     /* 归零状态机 */
     Arm_HeightHomingState homing_state;
@@ -279,6 +274,12 @@ extern const Arm_Config Arm_Config_Default;
  * @param cfg   配置 (可传 NULL 使用默认值)
  */
 void Arm_Init(Arm_Control *arm, const Arm_Config *cfg);
+
+/**
+ * @brief 执行归零: DM 使能+回零, C620 升降堵转归零
+ * @note  阻塞直到归零完成; 调用前队列必须已绑定, 调用后 arm 处于零位就绪状态
+ */
+void Arm_Homing(Arm_Control *arm);
 
 /**
  * @brief 更新目标值 (等效于 ROS topic 回调)

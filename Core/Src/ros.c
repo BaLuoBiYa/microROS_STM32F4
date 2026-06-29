@@ -4,21 +4,15 @@
 #include <string.h>
 
 // ── initNode ─────────────────────────────────────────────────────
-void initNode(Node *node)
+void Node_Init(Node *node)
 {
     memset(node, 0, sizeof(Node));
-    node->inited  = false;
-    node->create  = createNode;
-    node->destroy = destroyNode;
-    node->spin    = spinNode;
-#if PUBLISHER_NUM > 0
-    node->publish = publishMsg;
-#endif
-    node->setup = NULL;
+    node->inited = false;
+    node->setup  = NULL;
 }
 
 // ── createNode ───────────────────────────────────────────────────
-bool createNode(Node *node)
+bool Node_Create(Node *node)
 {
     rcl_allocator_t allocator = rcl_get_default_allocator();
 
@@ -71,7 +65,7 @@ bool createNode(Node *node)
 }
 
 // ── destroyNode ──────────────────────────────────────────────────
-bool destroyNode(Node *node)
+bool Node_Destroy(Node *node)
 {
     rcl_ret_t ret          = RCL_RET_OK;
     rmw_context_t *rmw_ctx = rcl_context_get_rmw_context(&node->support.context);
@@ -113,19 +107,13 @@ bool destroyNode(Node *node)
     // 4. fini support (closes session + transport)
     ret |= rclc_support_fini(&node->support);
 
-    // 5. re-init function pointers (memset zeroed them in fini)
-    node->create  = createNode;
-    node->destroy = destroyNode;
-    node->spin    = spinNode;
-#if PUBLISHER_NUM > 0
-    node->publish = publishMsg;
-#endif
+    node->setup  = NULL;
     node->inited = false;
     return (ret == RCL_RET_OK);
 }
 
 // ── spinNode ─────────────────────────────────────────────────────
-void spinNode(Node *node)
+void Node_Spin(Node *node)
 {
     if (!node->inited) {
         return;
@@ -195,20 +183,20 @@ void spinNode(Node *node)
 
 // ── Publisher ────────────────────────────────────────────────────
 #if PUBLISHER_NUM > 0
-bool initPublisher(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic)
+bool Node_InitPublisher(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic)
 {
     assert(idx >= 0 && idx < PUBLISHER_NUM);
     return rclc_publisher_init_default(&node->publisher[idx],
                                        &node->node, type, topic) == RCL_RET_OK;
 }
 
-bool finiPublisher(Node *node, int idx)
+bool Node_FiniPublisher(Node *node, int idx)
 {
     assert(idx >= 0 && idx < PUBLISHER_NUM);
     return rcl_publisher_fini(&node->publisher[idx], &node->node) == RCL_RET_OK;
 }
 
-bool publishMsg(Node *node, int idx, void *msg)
+bool Node_Publish(Node *node, int idx, void *msg)
 {
     assert(idx >= 0 && idx < PUBLISHER_NUM);
     return rcl_publish(&node->publisher[idx], msg, NULL) == RCL_RET_OK;
@@ -217,7 +205,7 @@ bool publishMsg(Node *node, int idx, void *msg)
 
 // ── Service ──────────────────────────────────────────────────────
 #if SERVICE_NUM > 0
-bool initService(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc, void *req, void *res, rclc_service_callback_t cb)
+bool Node_InitService(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc, void *req, void *res, rclc_service_callback_t cb)
 {
     assert(idx >= 0 && idx < SERVICE_NUM);
     node->svc_cb[idx]  = cb;
@@ -227,7 +215,7 @@ bool initService(Node *node, int idx, const rosidl_service_type_support_t *type,
                                      &node->node, type, svc) == RCL_RET_OK;
 }
 
-bool finiService(Node *node, int idx)
+bool Node_FiniService(Node *node, int idx)
 {
     assert(idx >= 0 && idx < SERVICE_NUM);
     return rcl_service_fini(&node->service[idx], &node->node) == RCL_RET_OK;
@@ -236,7 +224,7 @@ bool finiService(Node *node, int idx)
 
 // ── Subscriber ───────────────────────────────────────────────────
 #if SUBSCRIBER_NUM > 0
-bool initSubscriber(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic, void *msg, rclc_subscription_callback_t cb)
+bool Node_InitSubscriber(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic, void *msg, rclc_subscription_callback_t cb)
 {
     assert(idx >= 0 && idx < SUBSCRIBER_NUM);
     node->sub_cb[idx]  = cb;
@@ -245,7 +233,7 @@ bool initSubscriber(Node *node, int idx, const rosidl_message_type_support_t *ty
                                               &node->node, type, topic) == RCL_RET_OK;
 }
 
-bool finiSubscriber(Node *node, int idx)
+bool Node_FiniSubscriber(Node *node, int idx)
 {
     assert(idx >= 0 && idx < SUBSCRIBER_NUM);
     return rcl_subscription_fini(&node->subscriber[idx], &node->node) == RCL_RET_OK;
@@ -254,20 +242,20 @@ bool finiSubscriber(Node *node, int idx)
 
 // ── Client ───────────────────────────────────────────────────────
 #if CLIENT_NUM > 0
-bool initClient(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc)
+bool Node_InitClient(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc)
 {
     assert(idx >= 0 && idx < CLIENT_NUM);
     return rclc_client_init_default(&node->client[idx],
                                     &node->node, type, svc) == RCL_RET_OK;
 }
 
-bool finiClient(Node *node, int idx)
+bool Node_FiniClient(Node *node, int idx)
 {
     assert(idx >= 0 && idx < CLIENT_NUM);
     return rcl_client_fini(&node->client[idx], &node->node) == RCL_RET_OK;
 }
 
-bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms)
+bool Node_ClientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms)
 {
     assert(idx >= 0 && idx < CLIENT_NUM && node->inited);
 
@@ -298,7 +286,7 @@ bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms
 
 // ── Timer ────────────────────────────────────────────────────────
 #if TIMER_NUM > 0
-bool initTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb)
+bool Node_InitTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb)
 {
     assert(idx >= 0 && idx < TIMER_NUM);
     node->timer_cb[idx] = cb;
@@ -309,7 +297,7 @@ bool initTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb)
                                     true) == RCL_RET_OK;
 }
 
-bool finiTimer(Node *node, int idx)
+bool Node_FiniTimer(Node *node, int idx)
 {
     assert(idx >= 0 && idx < TIMER_NUM);
     return rcl_timer_fini(&node->timer[idx]) == RCL_RET_OK;

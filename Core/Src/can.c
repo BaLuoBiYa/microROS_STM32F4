@@ -1,10 +1,10 @@
 #include "can.h"
 
-void CANInit(CAN *can, CAN_HandleTypeDef *hcan)
+void CAN_Init(CAN *can, CAN_HandleTypeDef *hcan)
 {
-    can->hcan       = hcan;
-    can->rx_head    = 0;
-    can->rx_tail    = 0;
+    can->hcan    = hcan;
+    can->rx_head = 0;
+    can->rx_tail = 0;
 
     CAN_FilterTypeDef filter;
     filter.FilterBank           = 0;                      // 过滤器组0
@@ -30,7 +30,7 @@ void CANInit(CAN *can, CAN_HandleTypeDef *hcan)
     }
 }
 
-bool CANSend(CAN *can, CANFrame_t *frame)
+bool CAN_Send(CAN *can, CANFrame_t *frame)
 {
     if (HAL_CAN_GetTxMailboxesFreeLevel(can->hcan) == 0) {
         return false;
@@ -48,7 +48,7 @@ bool CANSend(CAN *can, CANFrame_t *frame)
                                 frame->CANFrame.data, &tx_mailbox) == HAL_OK;
 }
 
-void CANReceive(CAN *can)
+void CAN_Receive(CAN *can)
 {
     CAN_RxHeaderTypeDef rxHeader;
     uint8_t rxData[8];
@@ -73,7 +73,7 @@ void CANReceive(CAN *can)
     }
 }
 
-void CANReceiveISR(CAN *can)
+void CAN_ReceiveISR(CAN *can)
 {
     CAN_RxHeaderTypeDef rxHeader;
     uint8_t rxData[8];
@@ -97,7 +97,7 @@ void CANReceiveISR(CAN *can)
     }
 }
 
-CANFrame_t *CANGetRxFrame(CAN *can)
+CANFrame_t *CAN_GetRxFrame(CAN *can)
 {
     if (can->rx_tail == can->rx_head) {
         return NULL;

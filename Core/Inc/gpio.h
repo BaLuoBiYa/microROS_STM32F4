@@ -10,9 +10,9 @@ struct GPIO {
     uint8_t state;
 };
 
-void GPIOInit(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin);
-void GPIOOn(GPIO *gpio);
-void GPIOOff(GPIO *gpio);
-void GPIOToggle(GPIO *gpio);
+void GPIO_Init(GPIO *gpio, GPIO_TypeDef *port, uint16_t pin);
+void GPIO_On(GPIO *gpio);
+void GPIO_Off(GPIO *gpio);
+void GPIO_Toggle(GPIO *gpio);
 
 #endif  // !GPIO_H

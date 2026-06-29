@@ -79,8 +79,6 @@ extern osMessageQueueId_t dispNumHandle;
 extern osMessageQueueId_t armTargetHandle;
 extern osMessageQueueId_t armStateHandle;
 
-extern Arm_Control arm_control; /* 定义在 main.c */
-
 // ── entity setup ──
 static std_msgs__msg__UInt8 disp_msg;
 static std_msgs__msg__Empty alive_msg;
@@ -90,7 +88,12 @@ static float target_data_buf[2];
 static std_srvs__srv__SetBool_Request svc_req;
 static std_srvs__srv__SetBool_Response svc_res;
 
-static Node node;
+static Node node __attribute__((section(".ccmram")));
+static Arm_Control arm_control __attribute__((section(".ccmram")));
+static GPIO pump, led_red, led_blue __attribute__((section(".ccmram")));
+
+extern CAN can1;
+
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -109,9 +112,6 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
-GPIO pump, led_red, led_blue;
-CAN can1;
-
 // ── pump_ctlk service callback ──
 void pump_ctl_callback(const void *req, void *res)
 {
@@ -120,13 +120,13 @@ void pump_ctl_callback(const void *req, void *res)
 
     res_->success = true;
     if (req_->data == true) {
-        led_red.off(&led_red);
-        pump.off(&pump);
+        GPIO_Off(&led_red);
+        GPIO_Off(&pump);
         rosidl_runtime_c__String__assign(&res_->message, "on");
 
     } else {
-        led_red.on(&led_red);
-        pump.on(&pump);
+        GPIO_On(&led_red);
+        GPIO_On(&pump);
         rosidl_runtime_c__String__assign(&res_->message, "off");
     }
 }
@@ -184,7 +184,7 @@ void StartPubArmState(void *argument)
     state_buf[1]            = s.height_mm;
 
     if (node.inited) {
-        node.publish(&node, 0, &state_msg);
+        Node_Publish(&node, 0, &state_msg);
     }
 }
 
@@ -201,41 +201,41 @@ bool setupEntities(Node *n)
     target_msg.data.size     = 0;
 
     bool ok;
-    ok = initSubscriber(&node, 0,
-                        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-                        "STM32/disp_num",
-                        &disp_msg, dispNum_callback);
+    ok = Node_InitSubscriber(&node, 0,
+                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+                             "STM32/disp_num",
+                             &disp_msg, dispNum_callback);
 
-    ok = ok && initSubscriber(&node, 1,
-                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
-                              "STM32/alive",
-                              &alive_msg, alive_callback);
+    ok = ok && Node_InitSubscriber(&node, 1,
+                                   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
+                                   "STM32/alive",
+                                   &alive_msg, alive_callback);
 
-    ok = ok && initSubscriber(&node, 2,
-                              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-                              "/arm_target",
-                              &target_msg, arm_target_callback);
+    ok = ok && Node_InitSubscriber(&node, 2,
+                                   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+                                   "/arm_target",
+                                   &target_msg, arm_target_callback);
 
-    ok = ok && initPublisher(&node, 0,
-                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-                             "/arm_state");
+    ok = ok && Node_InitPublisher(&node, 0,
+                                  ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+                                  "/arm_state");
 
-    ok = ok && initService(&node, 0,
-                           ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
-                           "STM32/pump_ctrl",
-                           &svc_req, &svc_res,
-                           pump_ctl_callback);
+    ok = ok && Node_InitService(&node, 0,
+                                ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
+                                "STM32/pump_ctrl",
+                                &svc_req, &svc_res,
+                                pump_ctl_callback);
     return ok;
 }
 
 // ── microROS thread ──────────────────────────────────────────────
 void StartMicroROS(void *argument)
 {
-    GPIOInit(&pump, PUMP_GPIO_Port, PUMP_Pin);
-    GPIOInit(&led_red, LED_RED_GPIO_Port, LED_RED_Pin);
-    GPIOInit(&led_blue, LED_BLUE_GPIO_Port, LED_BLUE_Pin);
+    GPIO_Init(&pump, PUMP_GPIO_Port, PUMP_Pin);
+    GPIO_Init(&led_red, LED_RED_GPIO_Port, LED_RED_Pin);
+    GPIO_Init(&led_blue, LED_BLUE_GPIO_Port, LED_BLUE_Pin);
 
-    pump.on(&pump);
+    GPIO_On(&pump);
 
     // custom allocator
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
@@ -252,7 +252,7 @@ void StartMicroROS(void *argument)
         cubemx_transport_write, cubemx_transport_read);
 
     // ── node ─────────────────────────────────────────────────────
-    initNode(&node);
+    Node_Init(&node);
     node.setup = setupEntities;
 
     // ── main loop ────────────────────────────────────────────────
@@ -260,14 +260,13 @@ void StartMicroROS(void *argument)
         if (!node.inited) {
             HAL_IWDG_Refresh(&hiwdg);
 
-            // probe agent with quick ping — avoid 10s blocking in createNode
             if (rmw_uros_ping_agent(0, 1) == RMW_RET_OK) {
-                if (node.create(&node) && node.setup(&node)) {
+                if (Node_Create(&node) && node.setup(&node)) {
                     node.inited      = true;
                     node.error_count = 0;
                 } else {
                     if (node.inited) {
-                        node.destroy(&node);
+                        Node_Destroy(&node);
                     }
                 }
             }
@@ -275,7 +274,7 @@ void StartMicroROS(void *argument)
             continue;
         }
 
-        node.spin(&node);
+        Node_Spin(&node);
         osDelay(1);
     }
 }
@@ -283,19 +282,21 @@ void StartMicroROS(void *argument)
 void StartCAN(void *argument)
 {
     (void) argument;
-    CANInit(&can1, &hcan1);
+    CAN_Init(&can1, &hcan1);
 
     for (;;) {
         /* 1. ISR 环缓冲 → canRxHandle 队列 */
         CANFrame_t *rx_frame;
-        while ((rx_frame = can1.getRxFrame(&can1)) != NULL) {
+        while ((rx_frame = CAN_GetRxFrame(&can1)) != NULL) {
             osMessageQueuePut(canRxHandle, rx_frame, 0, 0);
         }
 
-        /* 2. canTxHandle 队列 → CAN 总线发送 (非阻塞) */
+        /* 2. canTxHandle 队列 → CAN 总线发送 (清空所有待发帧) */
         CANFrame_t tx_frame;
-        if (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 0) == osOK) {
-            can1.send(&can1, &tx_frame);
+        while (osMessageQueueGet(canTxHandle, &tx_frame, NULL, 0) == osOK) {
+            if (CAN_Send(&can1, &tx_frame)) {
+                GPIO_Toggle(&led_blue);
+            }
         }
 
         osDelay(1);
@@ -311,6 +312,9 @@ void StartArm(void *argument)
     arm_control.canTxQueue = canTxHandle;
     arm_control.canRxQueue = canRxHandle;
 
+    /* 归零: DM 回零 + C620 升降堵转归零 (阻塞, 完成后处于零位) */
+    Arm_Homing(&arm_control);
+
     const TickType_t period_ticks =
         (TickType_t) (arm_control.cfg.loop_period_s * 1000.0f);
     TickType_t last_wake = osKernelGetTickCount();
@@ -322,7 +326,7 @@ void StartArm(void *argument)
             Arm_FeedRxFrame(&arm_control, &rx_frame);
         }
 
-        /* 2. 消费 arm_target 命令 */
+        /* 2. 消费 arm_target 命令 (ROS2 50Hz 上位机) */
         ArmTargetCmd cmd;
         while (osMessageQueueGet(armTargetHandle, &cmd, NULL, 0) == osOK) {
             Arm_SetTarget(&arm_control, cmd.base_angle_rad, cmd.height_mm);

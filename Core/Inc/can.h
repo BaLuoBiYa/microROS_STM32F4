@@ -24,10 +24,10 @@ typedef struct CAN {
     volatile uint8_t rx_tail; /* 用户读索引 */
 } CAN;
 
-void CANInit(CAN *can, CAN_HandleTypeDef *hcan);
-bool CANSend(CAN *can, CANFrame_t *frame);
-void CANReceive(CAN *can);
-void CANReceiveISR(CAN *can);
-CANFrame_t *CANGetRxFrame(CAN *can);
+void CAN_Init(CAN *can, CAN_HandleTypeDef *hcan);
+bool CAN_Send(CAN *can, CANFrame_t *frame);
+void CAN_Receive(CAN *can);
+void CAN_ReceiveISR(CAN *can);
+CANFrame_t *CAN_GetRxFrame(CAN *can);
 
 #endif /* CAN_H */

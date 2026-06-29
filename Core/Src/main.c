@@ -38,8 +38,9 @@ typedef struct {
 
 /* 机械臂当前状态: 从 CAN 控制线程 → micro-ROS publisher */
 typedef struct {
-    float base_angle_rad;
     float height_mm;
+
+    float base_angle_rad;
 } ArmStateMsg;
 
 /* USER CODE END PTD */
@@ -82,14 +83,14 @@ osThreadId_t armControllerHandle;
 const osThreadAttr_t armController_attributes = {
     .name       = "armController",
     .stack_size = 2048 * 4,
-    .priority   = (osPriority_t) osPriorityNormal,
+    .priority   = (osPriority_t) osPriorityLow,
 };
 /* Definitions for canManager */
 osThreadId_t canManagerHandle;
 const osThreadAttr_t canManager_attributes = {
     .name       = "canManager",
     .stack_size = 128 * 4,
-    .priority   = (osPriority_t) osPriorityLow,
+    .priority   = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for dispNum */
 osMessageQueueId_t dispNumHandle;
@@ -120,8 +121,7 @@ static uint8_t ucHeapCCM[configTOTAL_HEAP_SIZE];
 static HeapRegion_t xHeapRegions[] = {
     {ucHeapCCM, sizeof(ucHeapCCM)},
     {NULL, 0}};
-
-Arm_Control arm_control;
+CAN can1 __attribute__((section(".ccmram")));
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -435,7 +435,7 @@ static void MX_GPIO_Init(void)
     HAL_GPIO_WritePin(LED_BLUE_GPIO_Port, LED_BLUE_Pin, GPIO_PIN_RESET);
 
     /*Configure GPIO pin Output Level */
-    HAL_GPIO_WritePin(PUMP_GPIO_Port, PUMP_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(PUMP_GPIO_Port, PUMP_Pin, GPIO_PIN_SET);
 
     /*Configure GPIO pin : LED_RED_Pin */
     GPIO_InitStruct.Pin   = LED_RED_Pin;
@@ -464,11 +464,10 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-extern CAN can1;
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
     if (hcan->Instance == can1.hcan->Instance) {
-        can1.receiveISR(&can1);
+        CAN_ReceiveISR(&can1);
     }
 }
 /* USER CODE END 4 */
@@ -532,7 +531,7 @@ __weak void StartArm(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartCAN */
-void StartCAN(void *argument)
+__weak void StartCAN(void *argument)
 {
     /* USER CODE BEGIN StartCAN */
     /* Infinite loop */

@@ -31,7 +31,6 @@ typedef struct Node {
 
 #if PUBLISHER_NUM > 0
     rcl_publisher_t publisher[PUBLISHER_NUM];
-    bool (*publish)(Node *node, int idx, void *msg);
 #endif
 #if SUBSCRIBER_NUM > 0
     rcl_subscription_t subscriber[SUBSCRIBER_NUM];
@@ -51,42 +50,39 @@ typedef struct Node {
     rcl_timer_t timer[TIMER_NUM];
     rcl_timer_callback_t timer_cb[TIMER_NUM];
 #endif
-    bool (*create)(Node *node);
-    bool (*destroy)(Node *node);
-    void (*spin)(Node *node);
     bool (*setup)(Node *node);
 } Node;
 
-void initNode(Node *node);
-bool createNode(Node *node);
-bool destroyNode(Node *node);
-void spinNode(Node *node);
+void Node_Init(Node *node);
+bool Node_Create(Node *node);
+bool Node_Destroy(Node *node);
+void Node_Spin(Node *node);
 
 #if PUBLISHER_NUM > 0
-bool initPublisher(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic);
-bool finiPublisher(Node *node, int idx);
-bool publishMsg(Node *node, int idx, void *msg);
+bool Node_InitPublisher(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic);
+bool Node_FiniPublisher(Node *node, int idx);
+bool Node_Publish(Node *node, int idx, void *msg);
 #endif
 
 #if SUBSCRIBER_NUM > 0
-bool initSubscriber(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic, void *msg, rclc_subscription_callback_t cb);
-bool finiSubscriber(Node *node, int idx);
+bool Node_InitSubscriber(Node *node, int idx, const rosidl_message_type_support_t *type, const char *topic, void *msg, rclc_subscription_callback_t cb);
+bool Node_FiniSubscriber(Node *node, int idx);
 #endif
 
 #if SERVICE_NUM > 0
-bool initService(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc, void *req, void *res, rclc_service_callback_t cb);
-bool finiService(Node *node, int idx);
+bool Node_InitService(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc, void *req, void *res, rclc_service_callback_t cb);
+bool Node_FiniService(Node *node, int idx);
 #endif
 
 #if CLIENT_NUM > 0
-bool initClient(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc);
-bool finiClient(Node *node, int idx);
-bool clientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms);
+bool Node_InitClient(Node *node, int idx, const rosidl_service_type_support_t *type, const char *svc);
+bool Node_FiniClient(Node *node, int idx);
+bool Node_ClientSendRequest(Node *node, int idx, void *req, void *res, int timeout_ms);
 #endif
 
 #if TIMER_NUM > 0
-bool initTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb);
-bool finiTimer(Node *node, int idx);
+bool Node_InitTimer(Node *node, int idx, int64_t period_ms, rcl_timer_callback_t cb);
+bool Node_FiniTimer(Node *node, int idx);
 #endif
 
 #endif  // !ROS_H
