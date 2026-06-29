@@ -236,6 +236,7 @@ void StartMicroROS(void *argument)
     GPIO_Init(&led_blue, LED_BLUE_GPIO_Port, LED_BLUE_Pin);
 
     GPIO_On(&pump);
+    GPIO_On(&led_red);
 
     // custom allocator
     rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
@@ -326,22 +327,52 @@ void StartArm(void *argument)
             Arm_FeedRxFrame(&arm_control, &rx_frame);
         }
 
-        /* 2. 消费 arm_target 命令 (ROS2 50Hz 上位机) */
-        ArmTargetCmd cmd;
-        while (osMessageQueueGet(armTargetHandle, &cmd, NULL, 0) == osOK) {
-            Arm_SetTarget(&arm_control, cmd.base_angle_rad, cmd.height_mm);
+        /* 2. [TEST] C620 升降测试: 0 → 150mm → 0, 每 5s 切换 (1s 后首次) */
+        {
+            static uint32_t tick = 0;
+            tick++;
+            if (tick >= 5000) {
+                static bool to_150 = false; /* 首次翻转为 true → 150mm */
+                to_150             = !to_150;
+                Arm_SetTarget(&arm_control, 0.0f, to_150 ? 150.0f : 0.0f);
+                tick = 0;
+            }
         }
+
+        /* 2b. 消费 arm_target 命令 (测试期间可屏蔽) */
+        // ArmTargetCmd cmd;
+        // while (osMessageQueueGet(armTargetHandle, &cmd, NULL, 0) == osOK) {
+        //     Arm_SetTarget(&arm_control, cmd.base_angle_rad, cmd.height_mm);
+        // }
 
         /* 3. 单步控制: 解码 → PID → 组帧 → 推入 canTxHandle */
         Arm_Update(&arm_control);
 
-        /* 4. 生产状态消息供 micro-ROS 发布 */
+        /* 4. [DEBUG] 每 200ms 输出斜率/高度/target */
+        {
+            static uint32_t dbg_tick = 0;
+            dbg_tick++;
+            if (dbg_tick >= 200) {
+                dbg_tick = 0;
+                char buf[80];
+                int sv  = (int) (arm_control.height_slope.out * 10.0f + 0.5f);
+                int hv  = (int) (Arm_GetHeightMm(&arm_control) * 10.0f + 0.5f);
+                int tv  = (int) (arm_control.height_slope.target * 10.0f + 0.5f);
+                int av  = (int) (arm_control.c620.target_angle * 10.0f + 0.5f);
+                int len = snprintf(buf, sizeof(buf),
+                                   "S_%04d H_%04d T_%04d A_%04d\r\n", sv, hv, tv, av);
+                if (len > 0 && len < (int) sizeof(buf)) {
+                    HAL_UART_Transmit(&huart1, (uint8_t *) buf, (uint16_t) len, 10);
+                }
+            }
+        }
+
+        /* 5. 生产状态消息供 micro-ROS 发布 */
         ArmStateMsg state = {
             .base_angle_rad = Arm_GetBaseAngle(&arm_control),
             .height_mm      = Arm_GetHeightMm(&arm_control),
         };
         osMessageQueuePut(armStateHandle, &state, 0, 0);
-
         last_wake += (period_ticks > 0 ? period_ticks : 1);
         osDelayUntil(last_wake);
     }

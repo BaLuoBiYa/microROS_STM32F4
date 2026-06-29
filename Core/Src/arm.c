@@ -31,22 +31,22 @@ const Arm_Config Arm_Config_Default = {
     .c620_current_max = 20.0f,
     .c620_gearbox     = 3591.0f / 187.0f,
     .c620_pid_dt      = 0.001f,
-    .gear_radius_mm   = 46.0f,
+    .gear_radius_mm   = 30.0f,
 
     .c620_angle_kp        = 50.0f,
-    .c620_angle_ki        = 0.0f,
+    .c620_angle_ki        = 10.0f,
     .c620_angle_kd        = 0.0f,
     .c620_angle_kf        = 0.0f,
-    .c620_angle_i_out_max = 0.0f,
-    .c620_angle_out_max   = 0.0f,
+    .c620_angle_i_out_max = 15.0f, /* rad/s, 积分饱和上限 */
+    .c620_angle_out_max   = 30.0f, /* rad/s, 限制最大角速度指令 */
     .c620_angle_dead_zone = 0.0f,
 
-    .c620_omega_kp        = 1.0f,
-    .c620_omega_ki        = 0.0f,
+    .c620_omega_kp        = 5.0f,
+    .c620_omega_ki        = 1.0f,
     .c620_omega_kd        = 0.0f,
     .c620_omega_kf        = 0.0f,
-    .c620_omega_i_out_max = 0.0f,
-    .c620_omega_out_max   = 1.0f,
+    .c620_omega_i_out_max = 10.0f, /* A, 积分饱和上限 */
+    .c620_omega_out_max   = 20.0f, /* A, 对应 c620_current_max */
     .c620_omega_dead_zone = 0.0f,
 
     /* 五次多项式轨迹 */
@@ -59,7 +59,7 @@ const Arm_Config Arm_Config_Default = {
     .target_height_mm  = 0.0f,
 
     /* 归零 */
-    .height_homing_current             = 2.0f,
+    .height_homing_current             = 1.0f,
     .height_homing_stall_time_s        = 0.5f,
     .height_homing_stall_threshold_rad = 0.015f,
 };
@@ -779,11 +779,9 @@ void Arm_Update(Arm_Control *arm)
     static uint8_t c620_tx_buf_200[8] = {0};
     static uint8_t c620_tx_buf_1ff[8] = {0};
 
-    /* 首次绑定时分配 tx_data_ptr */
-    if (arm->c620.tx_data_ptr == NULL) {
-        arm->c620.tx_data_ptr = c620_allocate_tx_data(
-            arm->c620.can_rx_id, c620_tx_buf_200, c620_tx_buf_1ff);
-    }
+    /* 首次绑定时 / Homing 后重新绑定 tx_data_ptr (两者 buffer 地址不同) */
+    arm->c620.tx_data_ptr = c620_allocate_tx_data(
+        arm->c620.can_rx_id, c620_tx_buf_200, c620_tx_buf_1ff);
 
     const float dt_s = arm->cfg.loop_period_s;
 
