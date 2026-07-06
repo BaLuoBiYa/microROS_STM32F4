@@ -36,9 +36,7 @@
 #include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/u_int8.h>
 #include <std_msgs/msg/float32_multi_array.h>
-#include <std_srvs/srv/set_bool.h>
-
-#include <rosidl_runtime_c/string_functions.h>
+#include <std_msgs/msg/bool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,10 +85,9 @@ extern osTimerId_t pubArmStateHandle;
 static std_msgs__msg__UInt8 disp_msg;
 static std_msgs__msg__Empty alive_msg;
 static std_msgs__msg__Float32MultiArray target_msg;
-static float target_data_buf[2];
+static std_msgs__msg__Bool pump_msg;
 
-static std_srvs__srv__SetBool_Request svc_req;
-static std_srvs__srv__SetBool_Response svc_res;
+static float target_data_buf[2];
 
 static Node node __attribute__((section(".ccmram")));
 static Arm_Control arm_control __attribute__((section(".ccmram")));
@@ -116,22 +113,16 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element, 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
-// ── pump_ctlk service callback ──
-void pump_ctl_callback(const void *req, void *res)
+// ── pump_ctrl subscriber callback ──
+void pump_ctrl_callback(const void *msg)
 {
-    std_srvs__srv__SetBool_Response *res_ = (std_srvs__srv__SetBool_Response *) res;
-    std_srvs__srv__SetBool_Request *req_  = (std_srvs__srv__SetBool_Request *) req;
-
-    res_->success = true;
-    if (req_->data == true) {
+    const std_msgs__msg__Bool *m = (const std_msgs__msg__Bool *) msg;
+    if (m->data) {
         GPIO_Off(&led_red);
         GPIO_Off(&pump);
-        rosidl_runtime_c__String__assign(&res_->message, "on");
-
     } else {
         GPIO_On(&led_red);
         GPIO_On(&pump);
-        rosidl_runtime_c__String__assign(&res_->message, "off");
     }
 }
 
@@ -195,9 +186,6 @@ void StartPubArmState(void *argument)
 bool setupEntities(Node *n)
 {
     (void) n;
-    // 重连时重置 response 字符串，避免复用已释放的内存
-    rosidl_runtime_c__String__fini(&svc_res.message);
-    rosidl_runtime_c__String__init(&svc_res.message);
 
     /* 预分配 arm_target subscriber 序列内存 */
     target_msg.data.data     = target_data_buf;
@@ -220,15 +208,14 @@ bool setupEntities(Node *n)
                                    "/arm_target",
                                    &target_msg, arm_target_callback);
 
+    ok = ok && Node_InitSubscriber(&node, 3,
+                                   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
+                                   "STM32/pump_ctrl",
+                                   &pump_msg, pump_ctrl_callback);
+
     ok = ok && Node_InitPublisher(&node, 0,
                                   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
                                   "/arm_state");
-
-    ok = ok && Node_InitService(&node, 0,
-                                ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
-                                "STM32/pump_ctrl",
-                                &svc_req, &svc_res,
-                                pump_ctl_callback);
     return ok;
 }
 
@@ -281,6 +268,13 @@ void StartMicroROS(void *argument)
         }
 
         Node_Spin(&node);
+
+        // 连续 error 超过阈值 → 触发重连
+        if (node.error_count > 50) {
+            Node_Destroy(&node);
+            continue;
+        }
+
         osDelay(1);
     }
 }
@@ -312,6 +306,10 @@ void StartCAN(void *argument)
 void StartArm(void *argument)
 {
     (void) argument;
+    // 等待 micro-ROS 初始化完成
+    while (!node.inited) {
+        osDelay(10);
+    }
 
     /* 初始化 ARM 控制实例, 绑定 CAN 收发队列 */
     Arm_Init(&arm_control, NULL);

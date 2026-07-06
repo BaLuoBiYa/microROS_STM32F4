@@ -23,7 +23,7 @@ const Arm_Config Arm_Config_Default = {
     .dm_current_max   = 7.0f,
     .dm_target_omega  = 0.0f,
     .dm_target_torque = 0.0f,
-    .dm_kp            = 5.0f,
+    .dm_kp            = 100.0f,
     .dm_kd            = 1.0f,
 
     /* DJI 3508 */
@@ -108,6 +108,41 @@ static inline void constrain_f(float *v, float min, float max)
     } else if (*v > max) {
         *v = max;
     }
+}
+
+static float wrap_angle_error_rad(float angle)
+{
+    const float two_pi = 2.0f * M_PI;
+
+    while (angle > M_PI) {
+        angle -= two_pi;
+    }
+    while (angle < -M_PI) {
+        angle += two_pi;
+    }
+    return angle;
+}
+
+static float expand_nearest_angle_rad(float reference, float target)
+{
+    return reference + wrap_angle_error_rad(target - reference);
+}
+
+static float wrap_to_symmetric_range(float value, float limit)
+{
+    const float span = 2.0f * limit;
+
+    if (limit <= 0.0f) {
+        return value;
+    }
+
+    while (value > limit) {
+        value -= span;
+    }
+    while (value < -limit) {
+        value += span;
+    }
+    return value;
 }
 
 /* ========== PID ========================================================== */
@@ -285,9 +320,10 @@ static void dm_output(const Arm_Control *arm,
                       float kp, float kd)
 {
     const Arm_DM_Motor *dm = &arm->dm;
+    float wrapped_angle    = wrap_to_symmetric_range(ctrl_angle, dm->angle_max);
 
-    /* 浮点 → 整数映射 (对齐原始代码: [-angle_max, +angle_max] → [0x7FFF, 0xFFFF]) */
-    uint16_t tmp_angle  = (uint16_t) float_to_int(ctrl_angle, -dm->angle_max, dm->angle_max, 0x7FFF, 0xFFFF);
+    /* 浮点 → 整数映射 */
+    uint16_t tmp_angle  = (uint16_t) float_to_int(wrapped_angle, -dm->angle_max, dm->angle_max, 0, 65535);
     uint16_t tmp_omega  = (uint16_t) float_to_int(ctrl_omega, -dm->omega_max, dm->omega_max, 0, 4095);
     uint16_t tmp_torque = (uint16_t) float_to_int(ctrl_torque, -dm->torque_max, dm->torque_max, 0, 4095);
     uint16_t tmp_kp     = (uint16_t) float_to_int(kp, 0.0f, 500.0f, 0, 4095);
@@ -401,19 +437,19 @@ static void arm_decode_latest(Arm_Control *arm)
             dm->encoder_primed = true;
         } else {
             int32_t delta = (int32_t) dm_raw_enc - (int32_t) dm->pre_encoder;
-            /* DM MIT 范围 [0x7FFF, 0xFFFF] 跨度 32768, 半程 16384 为翻转阈值 */
-            if (delta < -(1 << 14)) {
+            /* DM MIT 全 16-bit 范围跨度 65536, 半程 32768 为翻转阈值 */
+            if (delta < -(1 << 15)) {
                 dm->total_round++;
-            } else if (delta > (1 << 14)) {
+            } else if (delta > (1 << 15)) {
                 dm->total_round--;
             }
-            dm->total_encoder = dm->total_round * 32768 +
+            dm->total_encoder = dm->total_round * 65536 +
                                 (int32_t) dm_raw_enc;
             dm->pre_encoder = dm_raw_enc;
         }
 
         /* now_angle 使用 int_to_float, 与 dm_output 的 float_to_int 互逆 */
-        dm->now_angle = int_to_float((int32_t) dm_raw_enc, 0x7FFF, 0xFFFF,
+        dm->now_angle = int_to_float((int32_t) dm_raw_enc, 0, 65535,
                                      -dm->angle_max, dm->angle_max) +
                         (float) dm->total_round * 2.0f * dm->angle_max;
         dm->now_omega   = int_to_float((int32_t) dm_raw_omega, 0, 4095,
@@ -692,7 +728,7 @@ void Arm_Homing(Arm_Control *arm)
         arm->c620.can_rx_id, c620_tx_buf_200, c620_tx_buf_1ff);
 
     /* ── 1. DM 使能 ── */
-    dm_send_cmd(arm, dm_cmd_clear_error);
+    // dm_send_cmd(arm, dm_cmd_clear_error);
     dm_send_cmd(arm, dm_cmd_enable);
     arm->dm_enable_retry_timer = 0.0f;
     arm->dm_was_enabled        = false;
@@ -759,7 +795,8 @@ void Arm_Homing(Arm_Control *arm)
  */
 void Arm_SetTarget(Arm_Control *arm, float base_angle_rad, float height_mm)
 {
-    arm->base_angle_slope.target = base_angle_rad;
+    arm->base_angle_slope.target =
+        expand_nearest_angle_rad(arm->base_angle_slope.out, base_angle_rad);
     arm->height_slope.target     = height_mm;
 }
 

@@ -163,8 +163,13 @@ void Node_Spin(Node *node)
             if (rcl_take_request(&node->service[i], &req_id,
                                  node->svc_req[i]) == RCL_RET_OK) {
                 node->svc_cb[i](node->svc_req[i], node->svc_res[i]);
-                rcl_send_response(&node->service[i], &req_id,
-                                  node->svc_res[i]);
+                rcl_ret_t send_rc = rcl_send_response(&node->service[i],
+                                                      &req_id,
+                                                      node->svc_res[i]);
+                if (send_rc != RCL_RET_OK) {
+                    // response 发送失败 → session 可能失步 → 加速重连
+                    node->error_count += 5;
+                }
             }
         }
     }

@@ -104,29 +104,41 @@ size_t cubemx_transport_write(struct uxrCustomTransport *transport,
         return 0;
     }
 
-    // 等待上一次发送完成
+    // 等待上一次发送完成 (喂狗防止长时间阻塞)
     uint32_t wait_ms = 0;
     while (!cdc_tx_done) {
         osDelay(1);
         if (++wait_ms >= 100) {
+            // 上次发送卡死, 强制复位标志以便恢复
+            cdc_tx_done = true;
             return 0;
         }
     }
 
+    // 启动新发送, 处理 USBD_BUSY 重试 (最多 3 次)
     cdc_tx_done = false;
-    uint8_t ret = CDC_Transmit_FS(buf, (uint16_t) len);
-    if (ret != USBD_OK) {
+    for (int retry = 0; retry < 3; retry++) {
+        uint8_t ret = CDC_Transmit_FS(buf, (uint16_t) len);
+        if (ret == USBD_OK) {
+            break;
+        }
+        if (ret == USBD_BUSY) {
+            // USB 端点繁忙, 等待 1ms 后重试
+            osDelay(1);
+            continue;
+        }
+        // USBD_FAIL 等硬错误
         cdc_tx_done = true;
         return 0;
     }
 
-    // 等待本次发送完成
+    // 等待本次发送完成 (喂狗; 超时后不伪装 cdc_tx_done=true,
+    // 保留失败状态让下次调用感知到异常)
     wait_ms = 0;
     while (!cdc_tx_done) {
         osDelay(1);
         if (++wait_ms >= 100) {
-            cdc_tx_done = true;
-            return 0;
+            return 0;  // cdc_tx_done 保持 false, 下次进入时首循环会复位
         }
     }
 
