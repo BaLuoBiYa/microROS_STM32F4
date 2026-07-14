@@ -33,20 +33,20 @@ const Arm_Config Arm_Config_Default = {
     .c620_pid_dt      = 0.001f,
     .gear_radius_mm   = 30.0f,
 
-    .c620_angle_kp        = 50.0f,
-    .c620_angle_ki        = 10.0f,
+    .c620_angle_kp        = 15.0f,
+    .c620_angle_ki        = 1.0f,
     .c620_angle_kd        = 0.0f,
     .c620_angle_kf        = 0.0f,
-    .c620_angle_i_out_max = 15.0f, /* rad/s, 积分饱和上限 */
+    .c620_angle_i_out_max = 10.0f, /* rad/s, 积分饱和上限 */
     .c620_angle_out_max   = 30.0f, /* rad/s, 限制最大角速度指令 */
     .c620_angle_dead_zone = 0.0f,
 
-    .c620_omega_kp        = 5.0f,
-    .c620_omega_ki        = 1.0f,
+    .c620_omega_kp        = 1.0f,
+    .c620_omega_ki        = 0.5f,
     .c620_omega_kd        = 0.0f,
     .c620_omega_kf        = 0.0f,
-    .c620_omega_i_out_max = 10.0f, /* A, 积分饱和上限 */
-    .c620_omega_out_max   = 20.0f, /* A, 对应 c620_current_max */
+    .c620_omega_i_out_max = 20.0f, /* A, 积分饱和上限 */
+    .c620_omega_out_max   = 5.0f,  /* A, 对应 c620_current_max */
     .c620_omega_dead_zone = 0.0f,
 
     /* 五次多项式轨迹 */
@@ -797,7 +797,7 @@ void Arm_SetTarget(Arm_Control *arm, float base_angle_rad, float height_mm)
 {
     arm->base_angle_slope.target =
         expand_nearest_angle_rad(arm->base_angle_slope.out, base_angle_rad);
-    arm->height_slope.target     = height_mm;
+    arm->height_slope.target = height_mm;
 }
 
 /**
