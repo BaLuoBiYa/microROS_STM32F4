@@ -3,87 +3,112 @@
 
 extern osMessageQueueId_t dispNumHandle;
 
-/* ── RLE 解码 + 调用 BSP 函数逐行刷新（RGB565） ─────────────── */
+/* ── 紧凑字模逐行解码绘制 ─────────────────────────────── */
 /**
- * @brief 解码 RLE 压缩数据，通过 LCD_DispFlush 逐行写入 ILI9341
- * @param rle      RLE 字节数组
- * @param len      数组长度（字节数）
- * @param palette  4 色调色板，palette[0~3] 各为 RGB565 颜色
+ * @brief 解码紧凑 RLE 字模并逐行刷新到 LCD
+ * @param g       字模描述符（RLE 数据 + 宽高）
+ * @param x0,y0   屏幕目标左上角
+ * @param palette 4 色调色板
  */
-static void LCD_DrawRLE(const uint8_t *rle, uint32_t len,
-                        const uint16_t palette[4])
+static void LCD_DrawGlyph(const DigitGlyph_t *g,
+                          uint16_t x0, uint16_t y0,
+                          const uint16_t palette[4])
 {
-    /* 静态缓冲区 — 避免栈溢出（FreeRTOS 任务栈通常很小） */
-    static uint16_t rowBuf[240] __attribute__((section(".ccmram")));
-    uint32_t i     = 0; /* RLE 字节索引               */
-    uint16_t row   = 0; /* 当前行 Y 坐标              */
-    uint16_t col   = 0; /* 当前行内的列 X 坐标        */
-    uint16_t color = 0;
-    uint16_t run   = 0; /* 当前 run 剩余像素数        */
+    static uint16_t rowBuf[48] __attribute__((section(".ccmram")));
+    uint32_t i = 0;
+    uint16_t x = 0, y = 0;
 
-    while (i < len && row < 320) {
-        /* 取下一个 RLE 条目 */
-        if (run == 0) {
-            uint8_t byte = rle[i++];
-            color        = palette[(byte >> 6) & 0x3];
-            run          = (byte & 0x3F) + 1; /* 1~64 */
-        }
+    while (i < g->len && y < g->height) {
+        uint8_t byte   = g->data[i++];
+        uint16_t color = palette[(byte >> 6) & 0x3];
+        uint16_t run   = (byte & 0x3F) + 1;
 
-        /* 填充当前行，直到 run 耗尽或行满 */
-        while (run > 0 && col < 240) {
-            rowBuf[col++] = color;
-            run--;
-        }
+        while (run > 0 && y < g->height) {
+            uint16_t n = run;
+            if (x + n > g->width)
+                n = g->width - x;
+            for (uint16_t k = 0; k < n; k++)
+                rowBuf[x + k] = color;
+            x += n;
+            run -= n;
 
-        /* 本行已满 → 调用 BSP 函数刷新这一行 */
-        /* 注意：LCD_DispFlush 的后两个参数实际是 x_end, y_end（含），不是宽高 */
-        if (col >= 240) {
-            LCD_DispFlush(0, row, 239, row, rowBuf);
-            col = 0;
-            row++;
+            if (x >= g->width) {
+                LCD_DispFlush(x0, y0 + y, x0 + g->width - 1, y0 + y, rowBuf);
+                x = 0;
+                y++;
+            }
         }
-    }
-
-    /* 最后不足一行的残余像素 */
-    if (col > 0 && row < 320) {
-        for (uint16_t c = col; c < 240; c++) {
-            rowBuf[c] = palette[0]; /* 剩余填充背景色 */
-        }
-        LCD_DispFlush(0, row, 239, row, rowBuf);
     }
 }
 
+/* ── 屏幕参数 ────────────────────────────────────────── */
+#define SCR_W 240
+#define SCR_H 320
+#define GAP   4 /* 数字间距（像素） */
+
 void StartDisplay(void *argument)
 {
-    LCD_Init();    /* LCD ILI9341 初始化       */
-    LCD_SetDir(0); /* 竖屏                     */
+    LCD_Init();
+    LCD_SetDir(0);
 
-    /* RGB565 调色板 — 每个数字使用不同前景色（BSP 颜色宏） */
-    static const uint16_t palettes[4][4] = {
-        /* [0]=背景,   [3]=前景 */
-        {WHITE, BLACK, BLACK, RED},    /* 0: 白底红字 */
-        {WHITE, BLACK, BLACK, GREEN},  /* 1: 白底绿字 */
-        {WHITE, BLACK, BLACK, BLUE},   /* 2: 白底蓝字 */
-        {WHITE, BLACK, BLACK, YELLOW}, /* 3: 白底黄字 */
+    /* 每位数字独立调色板 */
+    static const uint16_t palettes[10][4] = {
+        {WHITE, BLACK, BLACK, RED},       /* 0 */
+        {WHITE, BLACK, BLACK, GREEN},     /* 1 */
+        {WHITE, BLACK, BLACK, BLUE},      /* 2 */
+        {WHITE, BLACK, BLACK, YELLOW},    /* 3 */
+        {WHITE, BLACK, BLACK, MAGENTA},   /* 4 */
+        {WHITE, BLACK, BLACK, CYAN},      /* 5 */
+        {WHITE, BLACK, BLACK, GRED},      /* 6 */
+        {WHITE, BLACK, BLACK, BROWN},     /* 7 */
+        {WHITE, BLACK, BLACK, LIGHTBLUE}, /* 8 */
+        {WHITE, BLACK, BLACK, BRRED},     /* 9 */
     };
 
-    /* RLE 数据指针表 */
-    static const struct {
-        const uint8_t *data;
-        uint32_t len;
-    } digits[4] = {
-        {digit_0_rle, sizeof(digit_0_rle)},
-        {digit_1_rle, sizeof(digit_1_rle)},
-        {digit_2_rle, sizeof(digit_2_rle)},
-        {digit_3_rle, sizeof(digit_3_rle)},
-    };
+    uint16_t num = 0;
+    LCD_Fill(0, 0, SCR_W - 1, SCR_H - 1, WHITE);
 
-    uint8_t state = 0;                            /* 当前显示的数字 */
-    LCD_Fill(0, 0, 239, 319, palettes[state][0]); /* 首次全屏填背景色 */
     for (;;) {
-        /* 全屏填背景色 */
-        osMessageQueueGet(dispNumHandle, &state, NULL, osWaitForever); /* 等待新数字 */
-        /* RLE 解码 → 逐行 BSP 刷新 */
-        LCD_DrawRLE(digits[state].data, digits[state].len, palettes[state]);
+        osMessageQueueGet(dispNumHandle, &num, NULL, osWaitForever);
+
+        /* 拆解十进制数字 */
+        uint8_t d[3];
+        int n;
+        if (num >= 100) {
+            d[0] = num / 100;
+            d[1] = (num / 10) % 10;
+            d[2] = num % 10;
+            n    = 3;
+        } else if (num >= 10) {
+            d[0] = num / 10;
+            d[1] = num % 10;
+            n    = 2;
+        } else {
+            d[0] = num;
+            n    = 1;
+        }
+
+        /* 计算整体宽高 */
+        uint16_t tw = 0, mh = 0;
+        for (int i = 0; i < n; i++) {
+            tw += digit_glyphs[d[i]].width;
+            if (digit_glyphs[d[i]].height > mh)
+                mh = digit_glyphs[d[i]].height;
+        }
+        tw += GAP * (n - 1);
+
+        /* 居中偏移 */
+        uint16_t sx = (SCR_W - tw) / 2;
+        uint16_t sy = (SCR_H - mh) / 2;
+
+        /* 清屏 + 逐个绘制数字 */
+        LCD_Fill(0, 0, SCR_W - 1, SCR_H - 1, WHITE);
+        uint16_t cx = sx;
+        for (int i = 0; i < n; i++) {
+            const DigitGlyph_t *g = &digit_glyphs[d[i]];
+            uint16_t yo           = (mh - g->height) / 2; /* 垂直居中对齐 */
+            LCD_DrawGlyph(g, cx, sy + yo, palettes[d[i]]);
+            cx += g->width + GAP;
+        }
     }
 }

@@ -8,10 +8,16 @@
 extern "C" {
 #endif
 
-extern const uint8_t digit_0_rle[1681];
-extern const uint8_t digit_1_rle[1573];
-extern const uint8_t digit_2_rle[1567];
-extern const uint8_t digit_3_rle[1620];
+extern const uint8_t digit_0_rle[1313];
+extern const uint8_t digit_1_rle[1250];
+extern const uint8_t digit_2_rle[1258];
+extern const uint8_t digit_3_rle[1273];
+extern const uint8_t digit_4_rle[1280];
+extern const uint8_t digit_5_rle[1265];
+extern const uint8_t digit_6_rle[1297];
+extern const uint8_t digit_7_rle[1256];
+extern const uint8_t digit_8_rle[1309];
+extern const uint8_t digit_9_rle[1295];
 
 /* Decode RLE and draw to LCD at (0,0) full-screen */
 void LCD_DrawDigit(uint8_t digit);

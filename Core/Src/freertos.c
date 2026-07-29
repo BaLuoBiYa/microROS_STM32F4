@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 
@@ -34,7 +33,7 @@
 #include "arm.h"
 
 #include <std_msgs/msg/empty.h>
-#include <std_msgs/msg/u_int8.h>
+#include <std_msgs/msg/u_int16.h>
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/bool.h>
 /* USER CODE END Includes */
@@ -82,7 +81,7 @@ extern osTimerId_t pubArmStateHandle;
 
 
 // ── entity setup ──
-static std_msgs__msg__UInt8 disp_msg;
+static std_msgs__msg__UInt16 disp_msg;
 static std_msgs__msg__Empty alive_msg;
 static std_msgs__msg__Float32MultiArray target_msg;
 static std_msgs__msg__Bool pump_msg;
@@ -134,11 +133,11 @@ void alive_callback(const void *msg)
 }
 
 // ── num display callback ──
-uint8_t disp_num = 0;
+uint16_t disp_num = 0;
 void dispNum_callback(const void *msg)
 {
-    std_msgs__msg__UInt8 *msg_ = (std_msgs__msg__UInt8 *) msg;
-    disp_num                   = msg_->data % 4;
+    std_msgs__msg__UInt16 *msg_ = (std_msgs__msg__UInt16 *) msg;
+    disp_num                    = msg_->data;
     osMessageQueuePut(dispNumHandle, &disp_num, 0, 0);
 }
 
@@ -194,7 +193,7 @@ bool setupEntities(Node *n)
 
     bool ok;
     ok = Node_InitSubscriber(&node, 0,
-                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+                             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt16),
                              "STM32/disp_num",
                              &disp_msg, dispNum_callback);
 
@@ -351,3 +350,4 @@ void StartArm(void *argument)
 }
 
 /* USER CODE END Application */
+
